@@ -1,0 +1,464 @@
+/* MyNaijaTask Escrow - Frontend Styles */
+
+/* Wallet Dashboard */
+.mnt-wallet-dashboard {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.mnt-wallet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+}
+
+.mnt-wallet-header h2 {
+    margin: 0;
+    font-size: 28px;
+}
+
+.wallet-id {
+    color: #666;
+    font-size: 14px;
+}
+
+.mnt-wallet-balance-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 40px;
+    border-radius: 12px;
+    margin-bottom: 30px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.balance-label {
+    font-size: 16px;
+    opacity: 0.9;
+    margin-bottom: 10px;
+}
+
+.balance-amount {
+    font-size: 48px;
+    font-weight: bold;
+    margin-bottom: 20px;
+}
+
+.balance-actions {
+    display: flex;
+    gap: 10px;
+}
+
+/* Buttons */
+.mnt-btn {
+    display: inline-block;
+    padding: 12px 24px;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 600;
+    text-align: center;
+    cursor: pointer;
+    border: none;
+    transition: all 0.3s ease;
+}
+
+.mnt-btn-primary {
+    background: white;
+    color: #667eea;
+}
+
+.mnt-btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.mnt-btn-secondary {
+    background: rgba(255,255,255,0.2);
+    color: white;
+    border: 1px solid white;
+}
+
+.mnt-btn-secondary:hover {
+    background: rgba(255,255,255,0.3);
+}
+
+.mnt-btn-success {
+    background: #10b981;
+    color: white;
+}
+
+.mnt-btn-danger {
+    background: #ef4444;
+    color: white;
+}
+
+.mnt-btn-large {
+    padding: 16px 32px;
+    font-size: 18px;
+}
+
+/* Forms */
+.mnt-deposit-form,
+.mnt-withdraw-form,
+.mnt-transfer-form {
+    background: white;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #333;
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 16px;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+/* Transactions */
+.mnt-recent-transactions {
+    background: white;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.mnt-recent-transactions h3 {
+    margin-top: 0;
+    margin-bottom: 20px;
+}
+
+.transactions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.transaction-item {
+    display: flex;
+    align-items: center;
+    padding: 15px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+}
+
+.transaction-item:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.tx-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    margin-right: 15px;
+}
+
+.icon-credit {
+    background: #d1fae5;
+    color: #10b981;
+}
+
+.icon-debit {
+    background: #fee2e2;
+    color: #ef4444;
+}
+
+.tx-details {
+    flex: 1;
+}
+
+.tx-description {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.tx-date {
+    font-size: 14px;
+    color: #666;
+}
+
+.tx-amount {
+    font-weight: bold;
+    font-size: 18px;
+    margin-right: 15px;
+}
+
+.tx-amount.credit {
+    color: #10b981;
+}
+
+.tx-amount.debit {
+    color: #ef4444;
+}
+
+.tx-status {
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.status-completed,
+.status-success {
+    background: #d1fae5;
+    color: #10b981;
+}
+
+.status-pending {
+    background: #fef3c7;
+    color: #f59e0b;
+}
+
+.status-failed {
+    background: #fee2e2;
+    color: #ef4444;
+}
+
+/* Escrow Box */
+.mnt-escrow-box {
+    background: white;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+}
+
+.escrow-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #e5e7eb;
+}
+
+.escrow-status {
+    padding: 6px 16px;
+    border-radius: 16px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.status-pending {
+    background: #fef3c7;
+    color: #f59e0b;
+}
+
+.status-delivered {
+    background: #dbeafe;
+    color: #3b82f6;
+}
+
+.status-released {
+    background: #d1fae5;
+    color: #10b981;
+}
+
+.status-refunded {
+    background: #e0e7ff;
+    color: #6366f1;
+}
+
+.status-disputed {
+    background: #fee2e2;
+    color: #ef4444;
+}
+
+.status-cancelled {
+    background: #f3f4f6;
+    color: #6b7280;
+}
+
+.escrow-details {
+    margin-bottom: 30px;
+}
+
+.detail-row {
+    display: flex;
+    padding: 12px 0;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.detail-row .label {
+    font-weight: 600;
+    width: 150px;
+    color: #666;
+}
+
+.detail-row .value {
+    flex: 1;
+    color: #333;
+}
+
+.detail-row .amount {
+    font-size: 20px;
+    font-weight: bold;
+    color: #667eea;
+}
+
+.escrow-actions {
+    margin-top: 20px;
+}
+
+.action-message {
+    background: #f3f4f6;
+    padding: 15px;
+    border-radius: 6px;
+    margin-bottom: 15px;
+}
+
+.buyer-actions,
+.seller-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.buyer-actions button {
+    width: 100%;
+}
+
+/* Notices */
+.success-notice,
+.info-notice,
+.warning-notice,
+.dispute-notice {
+    padding: 15px;
+    border-radius: 6px;
+    margin-top: 15px;
+}
+
+.success-notice {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.info-notice {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.warning-notice {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.dispute-notice {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+/* Messages */
+.mnt-message {
+    padding: 12px;
+    border-radius: 6px;
+    margin-top: 15px;
+}
+
+.mnt-message.success {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.mnt-message.error {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+/* Create Wallet */
+.mnt-create-wallet {
+    max-width: 600px;
+    margin: 40px auto;
+    text-align: center;
+}
+
+.wallet-create-form {
+    background: white;
+    padding: 40px;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.wallet-icon {
+    font-size: 64px;
+    margin-bottom: 20px;
+}
+
+.wallet-benefits {
+    text-align: left;
+    margin: 30px 0;
+}
+
+.wallet-benefits ul {
+    list-style: none;
+    padding: 0;
+}
+
+.wallet-benefits li {
+    padding: 10px 0;
+    font-size: 16px;
+    color: #333;
+}
+
+.wallet-exists {
+    background: white;
+    padding: 40px;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.success-icon {
+    font-size: 64px;
+    color: #10b981;
+    margin-bottom: 20px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .balance-amount {
+        font-size: 36px;
+    }
+    
+    .balance-actions {
+        flex-direction: column;
+    }
+    
+    .transaction-item {
+        flex-wrap: wrap;
+    }
+    
+    .detail-row {
+        flex-direction: column;
+    }
+    
+    .detail-row .label {
+        width: 100%;
+        margin-bottom: 5px;
+    }
+}
