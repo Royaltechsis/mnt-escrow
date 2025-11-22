@@ -201,12 +201,15 @@ class Router {
             return;
         }
         
-        $user = wp_get_current_user();
-        $callback_url = home_url('/wallet/deposit-callback');
+        // Get wallet_id from user meta
+        $wallet_id = get_user_meta($user_id, 'mnt_wallet_id', true);
         
-        $result = Payment::initialize_paystack($user_id, $amount, $user->user_email, $callback_url);
+        $result = Wallet::deposit($user_id, $amount, $wallet_id);
         
-        if ($result && isset($result['success']) && $result['success']) {
+        if ($result && isset($result['checkout_url'])) {
+            // API returned checkout URL - success
+            wp_send_json_success($result);
+        } elseif ($result && isset($result['success']) && $result['success']) {
             wp_send_json_success($result);
         } else {
             wp_send_json_error($result);

@@ -2,11 +2,11 @@
 if (!defined('ABSPATH')) exit;
 
 $user_id = get_current_user_id();
-$wallet_result = \MNT\Api\Wallet::balance($user_id);
+$wallet_result = \MNT\Api\wallet::balance($user_id);
 $balance = $wallet_result['balance'] ?? 0;
 $wallet_id = $wallet_result['wallet_id'] ?? '';
 
-$transactions_result = \MNT\Api\Wallet::transactions($user_id, 10);
+$transactions_result = \MNT\Api\wallet::transactions($user_id, 10);
 $transactions = $transactions_result['transactions'] ?? [];
 ?>
 

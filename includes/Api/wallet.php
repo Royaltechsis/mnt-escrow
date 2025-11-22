@@ -1,7 +1,7 @@
 <?php
 namespace MNT\Api;
 
-class Wallet {
+class wallet {
 
     /**
      * Create a new wallet for a user
@@ -58,14 +58,27 @@ class Wallet {
     }
 
     /**
-     * Deposit funds to wallet
+     * Deposit funds to wallet (fund account)
      */
-    public static function deposit($wp_user_id, $amount, $payment_method = 'paystack', $reference = null) {
-        return Client::post('/wallet/deposit', [
-            'user_id' => $wp_user_id,
+    public static function deposit($wp_user_id, $amount, $wallet_id = null) {
+        $user = get_userdata($wp_user_id);
+        if (!$user) {
+            return ['success' => false, 'message' => 'User not found'];
+        }
+
+        // Get wallet_id if not provided
+        if (!$wallet_id) {
+            $wallet_result = self::get($wp_user_id);
+            $wallet_id = $wallet_result['wallet_id'] ?? null;
+        }
+
+        return Client::post('/wallet/fund', [
+            'email' => $user->user_email,
             'amount' => floatval($amount),
-            'payment_method' => $payment_method,
-            'reference' => $reference
+            'metadata' => [
+                'user_id' => (string)$wp_user_id,
+                'wallet_id' => $wallet_id
+            ]
         ]);
     }
 

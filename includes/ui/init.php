@@ -83,7 +83,7 @@ class Init {
         ?>
         <div class="mnt-deposit-form">
             <h3>Deposit Funds</h3>
-            <form id="mnt-deposit-form">
+            <form id="mnt-deposit-form" method="post" action="">
                 <div class="form-group">
                     <label for="deposit-amount">Amount (₦)</label>
                     <input type="number" id="deposit-amount" name="amount" min="100" step="0.01" required>

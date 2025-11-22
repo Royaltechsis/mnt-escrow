@@ -5,13 +5,18 @@
     'use strict';
 
     // Deposit Form Handler
-    $('#mnt-deposit-form').on('submit', function(e) {
+    $(document).on('submit', '#mnt-deposit-form', function(e) {
         e.preventDefault();
+        
+        console.log('Deposit form submitted');
         
         var $form = $(this);
         var $btn = $form.find('button[type="submit"]');
         var $message = $form.find('.mnt-message');
         var amount = $form.find('#deposit-amount').val();
+
+        console.log('Amount:', amount);
+        console.log('AJAX URL:', mntEscrow.ajaxUrl);
 
         $btn.prop('disabled', true).text('Processing...');
         $message.hide();
@@ -25,17 +30,22 @@
                 amount: amount
             },
             success: function(response) {
-                if (response.success && response.data.authorization_url) {
+                console.log('AJAX Response:', response);
+                if (response.success && (response.data.checkout_url || response.data.authorization_url)) {
                     // Redirect to Paystack payment page
-                    window.location.href = response.data.authorization_url;
+                    var paymentUrl = response.data.checkout_url || response.data.authorization_url;
+                    console.log('Redirecting to:', paymentUrl);
+                    window.location.href = paymentUrl;
                 } else {
+                    console.log('Error:', response.data);
                     $message.addClass('error')
                            .text(response.data.message || 'Failed to initialize deposit')
                            .show();
                     $btn.prop('disabled', false).text('Deposit');
                 }
             },
-            error: function() {
+            error: function(xhr, status, error) {
+                console.log('AJAX Error:', xhr, status, error);
                 $message.addClass('error').text('An error occurred').show();
                 $btn.prop('disabled', false).text('Deposit');
             }
@@ -43,7 +53,7 @@
     });
 
     // Withdraw Form Handler
-    $('#mnt-withdraw-form').on('submit', function(e) {
+    $(document).on('submit', '#mnt-withdraw-form', function(e) {
         e.preventDefault();
         
         var $form = $(this);
@@ -92,7 +102,7 @@
     });
 
     // Transfer Form Handler
-    $('#mnt-transfer-form').on('submit', function(e) {
+    $(document).on('submit', '#mnt-transfer-form', function(e) {
         e.preventDefault();
         
         var $form = $(this);
