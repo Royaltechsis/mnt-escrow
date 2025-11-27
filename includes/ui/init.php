@@ -15,6 +15,10 @@ class Init {
         add_shortcode('mnt_escrow_box', [__CLASS__, 'escrow_box_shortcode']);
         add_shortcode('mnt_escrow_list', [__CLASS__, 'escrow_list_shortcode']);
         add_shortcode('mnt_create_wallet', [__CLASS__, 'create_wallet_shortcode']);
+        add_shortcode('mnt_escrow_deposit', [__CLASS__, 'escrow_deposit_shortcode']);
+        
+        // AJAX handlers
+        add_action('wp_ajax_mnt_create_escrow_transaction', [__CLASS__, 'handle_create_escrow_ajax']);
     }
 
     /**
@@ -338,5 +342,135 @@ class Init {
         ob_start();
         include dirname(__FILE__) . '/templates/transaction-history.php';
         return ob_get_clean();
+    }
+
+    /**
+     * Escrow Deposit Page Shortcode
+     */
+    public static function escrow_deposit_shortcode($atts) {
+        if (!is_user_logged_in()) {
+            return '<p>Please login to create an escrow transaction.</p>';
+        }
+
+        ob_start();
+        include dirname(__FILE__) . '/templates/escrow-deposit.php';
+        return ob_get_clean();
+    }
+
+    /**
+     * AJAX Handler: Create Escrow Transaction
+     */
+    public static function handle_create_escrow_ajax() {
+        check_ajax_referer('mnt_create_escrow', 'nonce');
+        
+        $buyer_id = intval($_POST['buyer_id'] ?? 0);
+        $seller_id = intval($_POST['seller_id'] ?? 0);
+        $project_id = intval($_POST['project_id'] ?? 0);
+        $amount = floatval($_POST['amount'] ?? 0);
+        
+        if (!$buyer_id || !$seller_id || !$amount || !$project_id) {
+            wp_send_json_error(['message' => 'Missing required parameters']);
+        }
+        
+        // Verify project exists
+        $project = get_post($project_id);
+        if (!$project || $project->post_type !== 'product') {
+            wp_send_json_error(['message' => 'Invalid project ID']);
+        }
+        
+        // Check if buyer has sufficient funds
+        $balance_result = \MNT\Api\Wallet::balance($buyer_id);
+        $balance = isset($balance_result['balance']) ? floatval($balance_result['balance']) : 0;
+        
+        if ($balance < $amount) {
+            wp_send_json_error(['message' => 'Insufficient funds in wallet. Please add funds first.']);
+        }
+        
+        // Create escrow transaction via API (this automatically deducts from wallet)
+        $escrow_result = \MNT\Api\Escrow::create((string)$seller_id, (string)$buyer_id, $amount);
+        
+        if (!$escrow_result || isset($escrow_result['error'])) {
+            $error_message = $escrow_result['error'] ?? 'Failed to create escrow transaction';
+            error_log('MNT Escrow Creation Failed: ' . print_r($escrow_result, true));
+            wp_send_json_error(['message' => $error_message]);
+        }
+        
+        // Get escrow ID from response
+        $escrow_id = $escrow_result['id'] ?? $escrow_result['escrow_id'] ?? '';
+        $escrow_status = $escrow_result['status'] ?? 'funded';
+        
+        if (!$escrow_id) {
+            error_log('MNT Escrow Creation: No ID returned - ' . print_r($escrow_result, true));
+            wp_send_json_error(['message' => 'Escrow created but ID not returned']);
+        }
+        
+        // Store escrow metadata in project
+        update_post_meta($project_id, 'mnt_escrow_id', $escrow_id);
+        update_post_meta($project_id, 'mnt_escrow_amount', $amount);
+        update_post_meta($project_id, 'mnt_escrow_buyer', $buyer_id);
+        update_post_meta($project_id, 'mnt_escrow_seller', $seller_id);
+        update_post_meta($project_id, 'mnt_escrow_status', $escrow_status);
+        update_post_meta($project_id, 'mnt_escrow_created_at', current_time('mysql'));
+        
+        // Update project status to hired
+        update_post_meta($project_id, '_post_project_status', 'hired');
+        
+        // Get proposal ID if passed
+        $proposal_id = isset($_POST['proposal_id']) ? intval($_POST['proposal_id']) : 0;
+        
+        // If we have a proposal, update it too
+        if ($proposal_id) {
+            wp_update_post(['ID' => $proposal_id, 'post_status' => 'hired']);
+            update_post_meta($proposal_id, 'mnt_escrow_id', $escrow_id);
+            update_post_meta($proposal_id, 'project_id', $project_id);
+        }
+        
+        // Create WooCommerce order for tracking
+        $order_url = '';
+        if (class_exists('WooCommerce')) {
+            $order = wc_create_order(['customer_id' => $buyer_id]);
+            if (!is_wp_error($order)) {
+                // Add project as order item
+                $product = wc_get_product($project_id);
+                if ($product) {
+                    $order->add_product($product, 1, ['subtotal' => $amount, 'total' => $amount]);
+                }
+                
+                // Store escrow metadata
+                $order->add_meta_data('mnt_escrow_id', $escrow_id);
+                $order->add_meta_data('project_id', $project_id);
+                $order->add_meta_data('task_product_id', $project_id);
+                $order->add_meta_data('seller_id', $seller_id);
+                $order->add_meta_data('buyer_id', $buyer_id);
+                $order->add_meta_data('_task_status', 'hired');
+                $order->add_meta_data('payment_type', 'escrow');
+                
+                if ($proposal_id) {
+                    $order->add_meta_data('proposal_id', $proposal_id);
+                }
+                
+                $order->set_total($amount);
+                $order->set_status('processing', 'Escrow funded - Project hired');
+                $order->set_payment_method('mnt_escrow');
+                $order->set_payment_method_title('Escrow Payment');
+                $order->save();
+                
+                // Build activity URL
+                $order_url = Taskbot_Profile_Menu::taskbot_profile_menu_link('projects', $buyer_id, true, 'activity', $proposal_id ? $proposal_id : $order->get_id());
+                if (!$order_url) {
+                    $order_url = home_url('/dashboard/?ref=projects&mode=activity&id=' . ($proposal_id ? $proposal_id : $order->get_id()));
+                }
+            }
+        }
+        
+        // Log success for debugging
+        error_log('MNT Escrow Created Successfully: ' . $escrow_id . ' for project ' . $project_id);
+        
+        wp_send_json_success([
+            'message' => 'Project hired successfully! Funds secured in escrow.',
+            'escrow_id' => $escrow_id,
+            'project_id' => $project_id,
+            'redirect_url' => $order_url
+        ]);
     }
 }

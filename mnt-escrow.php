@@ -15,11 +15,14 @@ if(!defined('ABSPATH')) exit;
 define('MNT_ESCROW_VERSION', '1.0.0');
 define('MNT_ESCROW_PATH', plugin_dir_path(__FILE__));
 define('MNT_ESCROW_URL', plugin_dir_url(__FILE__));
+define('MNT_ESCROW_FILE', __FILE__);
 
 class MNT_Escrow {
     
     public function __construct() {
         require_once __DIR__ . '/includes/autoload.php';
+        // require_once __DIR__ . '/includes/helpers.php'; // File does not exist, commented out to prevent fatal error
+        require_once __DIR__ . '/includes/setup-page.php';
         
         // Activation and deactivation hooks
         register_activation_hook(__FILE__, [$this, 'activate']);
