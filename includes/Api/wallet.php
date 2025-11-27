@@ -42,9 +42,8 @@ class wallet {
      * Get wallet balance
      */
     public static function balance($wp_user_id) {
-        return Client::get('/wallet/balance', [
-            'user_id' => $wp_user_id
-        ]);
+        $params = ['user_id' => (string)$wp_user_id];
+        return Client::get('/wallet/balance?' . http_build_query($params));
     }
 
     /**

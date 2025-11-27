@@ -229,11 +229,258 @@ class Dashboard {
      * Transactions page
      */
     public static function transactions_page() {
+        $page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
+        $per_page = 10;
+        $offset = ($page - 1) * $per_page;
+
+        // Get filters - NO defaults, empty means all-time
+        $start_date = isset($_GET['start_date']) && !empty($_GET['start_date']) 
+            ? sanitize_text_field($_GET['start_date']) 
+            : '';
+        $end_date = isset($_GET['end_date']) && !empty($_GET['end_date']) 
+            ? sanitize_text_field($_GET['end_date']) 
+            : '';
+        $transaction_type = isset($_GET['tx_type']) ? sanitize_text_field($_GET['tx_type']) : '';
+        $search_user_id = isset($_GET['user_id']) ? intval($_GET['user_id']) : 0;
+
+        // Fetch all transactions from API
+        $transactions_result = Transaction::list_all(
+            $transaction_type, 
+            null,
+            null,
+            $start_date,
+            $end_date,
+            $search_user_id
+        );
+
+        // API returns array directly
+        $all_transactions = is_array($transactions_result) ? $transactions_result : [];
+
+        // Calculate pagination
+        $total_count = count($all_transactions);
+        $total_pages = ceil($total_count / $per_page);
+
+        // Get current page transactions
+        $transactions = array_slice($all_transactions, $offset, $per_page);
         ?>
         <div class="wrap mnt-admin-wrap">
             <h1>All Transactions</h1>
-            <p>Transaction log functionality - integrate with API to fetch all system transactions.</p>
+
+            <!-- Filters Section -->
+            <div class="mnt-admin-filters">
+                <form method="get" action="" class="mnt-admin-filter-form">
+                    <input type="hidden" name="page" value="mnt-escrow-transactions">
+                    
+                    <div class="filter-row">
+                        <table class="form-table" style="margin: 0;">
+                            <tr>
+                                <th scope="row" style="padding: 5px 10px;"><label for="user_id">User ID:</label></th>
+                                <td style="padding: 5px 10px;">
+                                    <input type="number" id="user_id" name="user_id" 
+                                           value="<?php echo esc_attr($search_user_id); ?>" 
+                                           placeholder="Filter by user ID" class="small-text">
+                                </td>
+                                
+                                <th scope="row" style="padding: 5px 10px;"><label for="start_date">From:</label></th>
+                                <td style="padding: 5px 10px;">
+                                    <input type="date" id="start_date" name="start_date" 
+                                           value="<?php echo esc_attr($start_date); ?>" placeholder="All time">
+                                </td>
+                                
+                                <th scope="row" style="padding: 5px 10px;"><label for="end_date">To:</label></th>
+                                <td style="padding: 5px 10px;">
+                                    <input type="date" id="end_date" name="end_date" 
+                                           value="<?php echo esc_attr($end_date); ?>" placeholder="All time">
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row" style="padding: 5px 10px;"><label for="tx_type">Type:</label></th>
+                                <td style="padding: 5px 10px;">
+                                    <select id="tx_type" name="tx_type">
+                                        <option value="">All Types</option>
+                                        <option value="deposit" <?php selected($transaction_type, 'deposit'); ?>>Deposits</option>
+                                        <option value="withdrawal" <?php selected($transaction_type, 'withdrawal'); ?>>Withdrawals</option>
+                                        <option value="escrow_fund" <?php selected($transaction_type, 'escrow_fund'); ?>>Escrow Funded</option>
+                                        <option value="escrow_release" <?php selected($transaction_type, 'escrow_release'); ?>>Escrow Released</option>
+                                        <option value="refund" <?php selected($transaction_type, 'refund'); ?>>Refunds</option>
+                                        <option value="credit" <?php selected($transaction_type, 'credit'); ?>>Credits</option>
+                                    </select>
+                                </td>
+                                <td colspan="2" style="padding: 5px 10px;">
+                                    <button type="submit" name="action" value="filter" class="button button-primary">Filter</button>
+                                    <a href="<?php echo esc_url(admin_url('admin.php?page=mnt-escrow-transactions')); ?>" 
+                                       class="button">Clear Filters</a>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Transaction Summary -->
+            <div class="mnt-admin-summary">
+                <p>
+                    Showing <strong><?php echo number_format($total_count); ?></strong> transaction(s)
+                    <?php if ($search_user_id): ?>
+                        for User ID: <strong><?php echo $search_user_id; ?></strong>
+                    <?php endif; ?>
+                    <?php if ($start_date && $end_date): ?>
+                        from <strong><?php echo date('M d, Y', strtotime($start_date)); ?></strong> 
+                        to <strong><?php echo date('M d, Y', strtotime($end_date)); ?></strong>
+                    <?php elseif ($start_date): ?>
+                        from <strong><?php echo date('M d, Y', strtotime($start_date)); ?></strong> onwards
+                    <?php elseif ($end_date): ?>
+                        up to <strong><?php echo date('M d, Y', strtotime($end_date)); ?></strong>
+                    <?php else: ?>
+                        <strong>(All time)</strong>
+                    <?php endif; ?>
+                    <?php if (!empty($transaction_type)): ?>
+                        - Type: <strong><?php echo esc_html(ucfirst($transaction_type)); ?></strong>
+                    <?php endif; ?>
+                </p>
+            </div>
+
+            <!-- Transactions Table -->
+            <?php if (empty($transactions)): ?>
+                <div class="notice notice-info">
+                    <p>No transactions found.</p>
+                </div>
+            <?php else: ?>
+                <table class="wp-list-table widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Transaction ID</th>
+                            <th>Wallet ID</th>
+                            <th>Type</th>
+                            <th>Reference</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($transactions as $tx): 
+                            // API returns: id, transaction_type, amount, status, reference_code, timestamp, wallet_id
+                            $tx_type = strtolower($tx['transaction_type'] ?? 'unknown');
+                            $amount = floatval($tx['amount'] ?? 0);
+                            $status = strtolower($tx['status'] ?? 'pending');
+                            $date = $tx['timestamp'] ?? '';
+                            $reference = $tx['reference_code'] ?? '';
+                            $tx_id = $tx['id'] ?? '';
+                            $wallet_id = $tx['wallet_id'] ?? '';
+                            
+                            // Determine if credit or debit
+                            $is_credit = in_array($tx_type, ['deposit', 'escrow_release', 'refund', 'credit']);
+                            $amount_class = $is_credit ? 'credit' : 'debit';
+                            $amount_prefix = $is_credit ? '+' : '-';
+                            
+                            // Type label
+                            $type_label = ucwords(str_replace('_', ' ', $tx_type));
+                            $status_label = ucfirst($status);
+                        ?>
+                            <tr>
+                                <td>
+                                    <?php echo esc_html(date('M d, Y h:i A', strtotime($date))); ?>
+                                </td>
+                                <td>
+                                    <code><?php echo esc_html(substr($tx_id, 0, 8)); ?>...</code>
+                                </td>
+                                <td>
+                                    <code style="font-size: 11px;"><?php echo esc_html(substr($wallet_id, 0, 8)); ?>...</code>
+                                </td>
+                                <td>
+                                    <span class="mnt-type-badge mnt-type-<?php echo esc_attr($tx_type); ?>">
+                                        <?php echo esc_html($type_label); ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <?php echo esc_html($reference ?: '-'); ?>
+                                </td>
+                                <td>
+                                    <strong class="mnt-amount-<?php echo esc_attr($amount_class); ?>">
+                                        <?php echo $amount_prefix; ?>₦<?php echo number_format($amount, 2); ?>
+                                    </strong>
+                                </td>
+                                <td>
+                                    <span class="mnt-status-badge mnt-status-<?php echo esc_attr($status); ?>">
+                                        <?php echo esc_html($status_label); ?>
+                                    </span>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+
+                <!-- Pagination -->
+                <?php if ($total_pages > 1): ?>
+                <div class="tablenav bottom">
+                    <div class="tablenav-pages">
+                        <span class="displaying-num">
+                            <?php echo number_format($total_count); ?> items
+                        </span>
+                        <?php
+                        $base_url = remove_query_arg('paged');
+                        $separator = strpos($base_url, '?') !== false ? '&' : '?';
+                        
+                        echo paginate_links([
+                            'base' => $base_url . $separator . 'paged=%#%',
+                            'format' => '',
+                            'current' => $page,
+                            'total' => $total_pages,
+                            'prev_text' => '&laquo;',
+                            'next_text' => '&raquo;'
+                        ]);
+                        ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+            <?php endif; ?>
         </div>
+
+        <style>
+            .mnt-admin-filters {
+                background: #fff;
+                padding: 20px;
+                margin: 20px 0;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+            }
+            .mnt-admin-summary {
+                background: #f0f0f1;
+                padding: 15px;
+                margin: 15px 0;
+                border-left: 4px solid #2271b1;
+            }
+            .mnt-type-badge {
+                display: inline-block;
+                padding: 4px 8px;
+                border-radius: 3px;
+                font-size: 11px;
+                font-weight: 600;
+                text-transform: uppercase;
+            }
+            .mnt-type-deposit { background: #d4edda; color: #155724; }
+            .mnt-type-withdrawal { background: #f8d7da; color: #721c24; }
+            .mnt-type-escrow_fund { background: #fff3cd; color: #856404; }
+            .mnt-type-escrow_release { background: #d1ecf1; color: #0c5460; }
+            .mnt-type-escrow_refund { background: #e2e3e5; color: #383d41; }
+            .mnt-type-transfer_sent { background: #fce4ec; color: #880e4f; }
+            .mnt-type-transfer_received { background: #e1f5fe; color: #01579b; }
+            
+            .mnt-status-badge {
+                display: inline-block;
+                padding: 4px 8px;
+                border-radius: 3px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            .mnt-status-completed, .mnt-status-success { background: #46b450; color: #fff; }
+            .mnt-status-pending { background: #ffb900; color: #fff; }
+            .mnt-status-failed { background: #dc3232; color: #fff; }
+            
+            .mnt-amount-credit { color: #46b450; }
+            .mnt-amount-debit { color: #dc3232; }
+        </style>
         <?php
     }
 

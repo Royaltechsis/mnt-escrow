@@ -3,11 +3,13 @@ if (!defined('ABSPATH')) exit;
 
 $user_id = get_current_user_id();
 $wallet_result = \MNT\Api\wallet::balance($user_id);
-$balance = $wallet_result['balance'] ?? 0;
-$wallet_id = $wallet_result['wallet_id'] ?? '';
+// API returns: {"user_id": "217", "balance": 500.0, "currency": "NGN"}
+$balance = isset($wallet_result['balance']) ? floatval($wallet_result['balance']) : 0;
+$wallet_id = $wallet_result['wallet_id'] ?? $wallet_result['user_id'] ?? '';
 
-$transactions_result = \MNT\Api\wallet::transactions($user_id, 10);
-$transactions = $transactions_result['transactions'] ?? [];
+// Don't fetch old transactions - they're shown in transaction history page
+// $transactions_result = \MNT\Api\wallet::transactions($user_id, 10);
+// $transactions = $transactions_result['transactions'] ?? [];
 ?>
 
 <div class="mnt-wallet-dashboard">
@@ -38,7 +40,7 @@ $transactions = $transactions_result['transactions'] ?? [];
         </div>
     </div>
 
-    <div class="mnt-recent-transactions">
+   <!--  <div class="mnt-recent-transactions">
         <h3>Recent Transactions</h3>
         <?php if (empty($transactions)): ?>
             <p class="no-transactions">No transactions yet.</p>
@@ -68,7 +70,7 @@ $transactions = $transactions_result['transactions'] ?? [];
             </div>
             <a href="#" class="view-all-transactions">View All Transactions</a>
         <?php endif; ?>
-    </div>
+    </div> -->
 </div>
 
 <script>

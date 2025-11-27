@@ -11,6 +11,7 @@ class Init {
         add_shortcode('mnt_withdraw_form', [__CLASS__, 'withdraw_form_shortcode']);
         add_shortcode('mnt_transfer_form', [__CLASS__, 'transfer_form_shortcode']);
         add_shortcode('mnt_transactions', [__CLASS__, 'transactions_shortcode']);
+        add_shortcode('mnt_transaction_history', [__CLASS__, 'transaction_history_shortcode']);
         add_shortcode('mnt_escrow_box', [__CLASS__, 'escrow_box_shortcode']);
         add_shortcode('mnt_escrow_list', [__CLASS__, 'escrow_list_shortcode']);
         add_shortcode('mnt_create_wallet', [__CLASS__, 'create_wallet_shortcode']);
@@ -323,6 +324,19 @@ class Init {
 
         ob_start();
         include dirname(__FILE__) . '/templates/create-wallet.php';
+        return ob_get_clean();
+    }
+
+    /**
+     * Transaction History Shortcode with Pagination and Filters
+     */
+    public static function transaction_history_shortcode($atts) {
+        if (!is_user_logged_in()) {
+            return '<p>Please login to view your transaction history.</p>';
+        }
+
+        ob_start();
+        include dirname(__FILE__) . '/templates/transaction-history.php';
         return ob_get_clean();
     }
 }

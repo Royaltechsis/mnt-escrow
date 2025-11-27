@@ -52,13 +52,6 @@ class Router {
             'callback' => [__CLASS__, 'rest_get_escrow'],
             'permission_callback' => [__CLASS__, 'check_user_permission']
         ]);
-
-        // Payment webhook (public)
-        register_rest_route('mnt/v1', '/webhook/paystack', [
-            'methods' => 'POST',
-            'callback' => [__CLASS__, 'handle_paystack_webhook'],
-            'permission_callback' => '__return_true'
-        ]);
     }
 
     /**
@@ -306,21 +299,4 @@ class Router {
         }
     }
 
-    /**
-     * Handle Paystack webhook
-     */
-    public static function handle_paystack_webhook($request) {
-        $body = $request->get_body();
-        $payload = json_decode($body, true);
-        
-        // Verify webhook signature here if needed
-        
-        $result = Payment::paystack_webhook($payload);
-        
-        if ($result && isset($result['success']) && $result['success']) {
-            return new \WP_REST_Response(['success' => true], 200);
-        }
-        
-        return new \WP_REST_Response(['success' => false], 400);
-    }
 }

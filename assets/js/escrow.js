@@ -209,6 +209,20 @@
     var reference = urlParams.get('reference');
     
     if (reference) {
+        // Check if we've already processed this reference (prevent duplicate processing)
+        var processedKey = 'mnt_processed_' + reference;
+        if (sessionStorage.getItem(processedKey)) {
+            // Already processed, just clean up URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+            return;
+        }
+        
+        // Mark as being processed
+        sessionStorage.setItem(processedKey, 'true');
+        
+        // Remove reference from URL immediately to prevent re-processing on refresh
+        window.history.replaceState({}, document.title, window.location.pathname);
+        
         // Verify payment
         $.ajax({
             url: mntEscrow.ajaxUrl,
@@ -221,12 +235,17 @@
             success: function(response) {
                 if (response.success) {
                     alert('Payment successful! Your wallet has been credited.');
-                    // Remove reference from URL
-                    window.history.replaceState({}, document.title, window.location.pathname);
                     location.reload();
                 } else {
-                    alert('Payment verification failed.');
+                    alert('Payment verification failed: ' + (response.data.message || 'Unknown error'));
+                    // Remove processed flag on failure so user can retry
+                    sessionStorage.removeItem(processedKey);
                 }
+            },
+            error: function() {
+                alert('Payment verification error. Please contact support.');
+                // Remove processed flag on error so user can retry
+                sessionStorage.removeItem(processedKey);
             }
         });
     }

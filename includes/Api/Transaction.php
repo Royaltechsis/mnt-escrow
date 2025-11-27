@@ -15,16 +15,59 @@ class Transaction {
     /**
      * List all transactions for a user
      */
-    public static function list_by_user($user_id, $type = null, $limit = 50, $offset = 0) {
-        $data = [
-            'user_id' => $user_id,
-            'limit' => $limit,
-            'offset' => $offset
+    public static function list_by_user($user_id, $type = null, $limit = null, $offset = null, $start_date = null, $end_date = null) {
+        $params = [
+            'user_id' => $user_id
         ];
-        if ($type) {
-            $data['type'] = $type; // 'deposit', 'withdraw', 'transfer', 'escrow'
+        // Only add optional parameters if they have values
+        if ($type && $type !== '') {
+            $params['type'] = strtoupper($type); // API expects uppercase: DEPOSIT, WITHDRAWAL
         }
-        return Client::post('/transaction/list', $data);
+        if ($limit !== null) {
+            $params['limit'] = $limit;
+        }
+        if ($offset !== null) {
+            $params['offset'] = $offset;
+        }
+        // Only add dates if explicitly provided (for filtering)
+        if ($start_date && $start_date !== '') {
+            $params['start_date'] = $start_date;
+        }
+        if ($end_date && $end_date !== '') {
+            $params['end_date'] = $end_date;
+        }
+        
+        // Use GET request with query parameters
+        return Client::get('/wallet/transaction_history?' . http_build_query($params));
+    }
+
+    /**
+     * List all transactions (admin only)
+     */
+    public static function list_all($type = null, $limit = null, $offset = null, $start_date = null, $end_date = null, $user_id = null) {
+        $params = [];
+        if ($user_id && $user_id > 0) {
+            $params['user_id'] = $user_id;
+        }
+        if ($type && $type !== '') {
+            $params['type'] = strtoupper($type);
+        }
+        // Only add dates if explicitly provided
+        if ($start_date && $start_date !== '') {
+            $params['start_date'] = $start_date;
+        }
+        if ($end_date && $end_date !== '') {
+            $params['end_date'] = $end_date;
+        }
+        if ($limit !== null) {
+            $params['limit'] = $limit;
+        }
+        if ($offset !== null) {
+            $params['offset'] = $offset;
+        }
+        
+        // Use GET request for admin endpoint
+        return Client::get('/admin/wallet/get_transactions?' . http_build_query($params));
     }
 
     /**
