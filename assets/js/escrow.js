@@ -38,15 +38,29 @@
                     window.location.href = paymentUrl;
                 } else {
                     console.log('Error:', response.data);
+                    var errorMsg = '';
+                    if (response.data && response.data.message) {
+                        errorMsg = response.data.message;
+                    } else if (typeof response.data === 'string') {
+                        errorMsg = response.data;
+                    } else {
+                        errorMsg = 'Failed to initialize deposit.';
+                    }
+                    // Show raw response for debugging
+                    errorMsg += '<br><pre style="white-space:pre-wrap;">' + JSON.stringify(response, null, 2) + '</pre>';
                     $message.addClass('error')
-                           .text(response.data.message || 'Failed to initialize deposit')
+                           .html(errorMsg)
                            .show();
                     $btn.prop('disabled', false).text('Deposit');
                 }
             },
             error: function(xhr, status, error) {
                 console.log('AJAX Error:', xhr, status, error);
-                $message.addClass('error').text('An error occurred').show();
+                var errorMsg = 'An error occurred';
+                if (xhr && xhr.responseText) {
+                    errorMsg += '<br><pre style="white-space:pre-wrap;">' + xhr.responseText + '</pre>';
+                }
+                $message.addClass('error').html(errorMsg).show();
                 $btn.prop('disabled', false).text('Deposit');
             }
         });

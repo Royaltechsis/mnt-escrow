@@ -73,6 +73,71 @@ class Dashboard {
             'mnt-escrow-wallets',
             [__CLASS__, 'wallets_page']
         );
+
+        add_submenu_page(
+            'mnt-escrow',
+            'Escrow Management',
+            'Escrow Management',
+            'manage_options',
+            'mnt-escrow-management',
+            [__CLASS__, 'escrow_management_page']
+        );
+    }
+    /**
+     * Escrow Management Page
+     */
+    public static function escrow_management_page() {
+        ?>
+        <div class="wrap mnt-admin-wrap">
+            <h1>Escrow Management</h1>
+
+            <form method="get" action="" style="margin-bottom: 24px;">
+                <input type="hidden" name="page" value="mnt-escrow-management">
+                <label for="escrow_id_search"><strong>Search Escrow by ID:</strong></label>
+                <input type="text" id="escrow_id_search" name="escrow_id" value="<?php echo esc_attr($_GET['escrow_id'] ?? ''); ?>" style="width: 300px;">
+                <button type="submit" class="button button-primary">Search</button>
+            </form>
+
+            <div id="mnt-escrow-management-results">
+                <?php if (!empty($_GET['escrow_id'])): ?>
+                    <h2>Escrow Details (ID: <?php echo esc_html($_GET['escrow_id']); ?>)</h2>
+                    <div class="notice notice-info">(API integration for details coming next step)</div>
+                    <!-- TODO: Show escrow details and action buttons here -->
+                <?php endif; ?>
+            </div>
+
+            <hr style="margin: 32px 0;">
+            <h2>All Disputed Escrows</h2>
+            <div class="notice notice-info">(API integration for disputes coming next step)</div>
+            <table class="wp-list-table widefat fixed striped">
+                <thead>
+                    <tr>
+                        <th>Escrow ID</th>
+                        <th>Client ID</th>
+                        <th>Merchant ID</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- TODO: Populate with API data -->
+                    <tr><td colspan="6"><em>Disputed escrows will be listed here.</em></td></tr>
+                </tbody>
+            </table>
+            <div style="margin-top: 24px;">
+                <button class="button">Force Release Funds</button>
+                <button class="button">Force Return Funds</button>
+                <button class="button">Cancel Transaction</button>
+                <button class="button">Dispute Transaction</button>
+                <button class="button">Resolve Dispute</button>
+            </div>
+        </div>
+        <style>
+        .mnt-admin-wrap h2 { margin-top: 2em; }
+        .mnt-admin-wrap table th, .mnt-admin-wrap table td { text-align: left; }
+        </style>
+        <?php
     }
 
     /**

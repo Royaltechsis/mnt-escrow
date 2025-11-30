@@ -19,6 +19,56 @@ class Init {
         
         // AJAX handlers
         add_action('wp_ajax_mnt_create_escrow_transaction', [__CLASS__, 'handle_create_escrow_ajax']);
+        add_action('wp_ajax_mnt_deposit', [__CLASS__, 'handle_deposit_ajax']);
+        add_action('wp_ajax_mnt_complete_escrow_funds', [__CLASS__, 'handle_complete_escrow_funds_ajax']);
+        add_action('wp_ajax_nopriv_mnt_complete_escrow_funds', [__CLASS__, 'handle_complete_escrow_funds_ajax']);
+
+    }
+
+    /**
+     * AJAX Handler: Complete Escrow Funds (move funds to escrow)
+     */
+    public static function handle_complete_escrow_funds_ajax() {
+        check_ajax_referer('mnt_nonce', 'nonce');
+        $project_id = isset($_POST['project_id']) ? intval($_POST['project_id']) : 0;
+        $user_id = isset($_POST['user_id']) ? intval($_POST['user_id']) : 0;
+        if (!$project_id || !$user_id) {
+            wp_send_json_error(['message' => 'Missing project or user ID.']);
+        }
+        $result = \MNT\Api\Escrow::client_release_funds($user_id, $project_id);
+        if (isset($result['status']) && strtoupper($result['status']) === 'FUNDED') {
+            wp_send_json_success(['message' => $result['message'] ?? 'Funds released successfully', 'client_release_response' => $result]);
+        } else {
+            $msg = $result['message'] ?? ($result['error'] ?? 'Failed to move funds.');
+            wp_send_json_error(['message' => $msg, 'client_release_response' => $result]);
+        }
+    }
+
+    /**
+     * AJAX Handler: Deposit Funds
+     */
+    public static function handle_deposit_ajax() {
+        check_ajax_referer('mnt_nonce', 'nonce');
+        if (!is_user_logged_in()) {
+            wp_send_json_error(['message' => 'You must be logged in to deposit.']);
+        }
+        $user_id = get_current_user_id();
+        $amount = isset($_POST['amount']) ? floatval($_POST['amount']) : 0;
+        if ($amount < 100) {
+            wp_send_json_error(['message' => 'Minimum deposit is ₦100.']);
+        }
+        // Call API to initialize deposit
+        $result = \MNT\Api\wallet::deposit($user_id, $amount);
+        if ((isset($result['checkout_url']) || isset($result['authorization_url'])) && empty($result['error'])) {
+            wp_send_json_success([
+                'checkout_url' => $result['checkout_url'] ?? $result['authorization_url'],
+                'reference' => $result['reference'] ?? '',
+            ]);
+        } elseif (isset($result['error']) || isset($result['message'])) {
+            wp_send_json_error(['message' => $result['error'] ?? $result['message']]);
+        } else {
+            wp_send_json_error(['message' => 'Failed to initialize deposit.']);
+        }
     }
 
     /**
@@ -40,12 +90,33 @@ class Init {
             true
         );
 
-        wp_localize_script('mnt-escrow-script', 'mntEscrow', [
+        // Enqueue the hire handler script for escrow creation feedback
+        wp_enqueue_script(
+            'mnt-hire-script',
+            plugins_url('assets/js/mnt-hire.js', dirname(dirname(__FILE__))),
+            ['jquery'],
+            '1.0.0',
+            true
+        );
+
+        // Localize for escrow.js and mnt-complete-escrow.js
+        $mnt_escrow_localize = [
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('mnt_nonce'),
             'restUrl' => rest_url('mnt/v1'),
             'restNonce' => wp_create_nonce('wp_rest')
-        ]);
+        ];
+        wp_localize_script('mnt-escrow-script', 'mntEscrow', $mnt_escrow_localize);
+        // Enqueue and localize mnt-complete-escrow.js for modal Complete button
+        // Ensure jQuery is loaded before mnt-complete-escrow.js
+        wp_enqueue_script(
+            'mnt-complete-escrow-script',
+            plugins_url('assets/js/mnt-complete-escrow.js', dirname(dirname(__FILE__))),
+            ['jquery'],
+            '1.0.0',
+            true
+        );
+        wp_localize_script('mnt-complete-escrow-script', 'mntEscrow', $mnt_escrow_localize);
     }
 
     /**

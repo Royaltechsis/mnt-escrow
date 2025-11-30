@@ -4,16 +4,38 @@ namespace MNT\Api;
 class Escrow {
 
     /**
-     * Create a new escrow transaction
+     * Release funds from client to escrow (custom endpoint)
+     * @param int $user_id
+     * @param int $project_id
+     * @return array|false
      */
-    public static function create($buyer_id, $seller_id, $amount, $task_id = null, $description = '') {
-        return Client::post('/escrow/create', [
-            'buyer_id' => $buyer_id,
-            'seller_id' => $seller_id,
-            'amount' => floatval($amount),
-            'task_id' => $task_id,
-            'description' => $description
-        ]);
+    public static function client_release_funds($user_id, $project_id) {
+        $data = [
+            'user_id' => (string)$user_id,
+            'project_id' => (string)$project_id
+        ];
+        return Client::post('/escrow/client_release_funds', $data);
+    }
+
+    /**
+     * Create a new escrow transaction (updated schema)
+     *
+     * @param string $merchant_id Seller or merchant ID
+     * @param string $client_id   Buyer or client ID
+     * @param float $amount       Amount (must be > 0)
+     * @param string $project_id  Project or task ID (optional but recommended)
+     * @return array|false        API response or false on failure
+     */
+    public static function create($merchant_id, $client_id, $amount, $project_id = null) {
+        $data = [
+            'merchant_id' => $merchant_id,
+            'client_id'   => $client_id,
+            'amount'      => floatval($amount)
+        ];
+        if ($project_id) {
+            $data['project_id'] = $project_id;
+        }
+        return Client::post('/escrow/create_transaction', $data);
     }
 
     /**

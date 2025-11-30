@@ -5,6 +5,11 @@ class Client {
     private static $base = "https://escrow-api-1vu6.onrender.com/api";
 
     public static function post($endpoint, $body) {
+        // Debug: log the outgoing JSON payload
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('MNT API POST to ' . self::$base . $endpoint . ' with body: ' . print_r($body, true));
+            // Removed echo debug output to prevent breaking AJAX JSON responses
+        }
         $res = wp_remote_post(self::$base . $endpoint, [
             'headers' => ['Content-Type' => 'application/json'],
             'body'    => json_encode($body),
