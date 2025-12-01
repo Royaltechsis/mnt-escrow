@@ -27,7 +27,7 @@ class Payment {
     /**
      * Process webhook from Paystack
      */
-    public static function paystack_webhook($payload) {
+    /* public static function paystack_webhook($payload) {
         return Client::post('/payment/paystack/webhook', $payload);
-    }
+    } */
 }

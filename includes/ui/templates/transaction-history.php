@@ -16,7 +16,7 @@ $end_date = isset($_GET['end_date']) && !empty($_GET['end_date'])
 $transaction_type = isset($_GET['tx_type']) ? sanitize_text_field($_GET['tx_type']) : '';
 $search_query = isset($_GET['search']) ? sanitize_text_field($_GET['search']) : '';
 
-// Fetch transactions from API
+// Fetch wallet transactions from API
 $transactions_result = \MNT\Api\Transaction::list_by_user(
     $user_id, 
     $transaction_type, 
@@ -27,7 +27,53 @@ $transactions_result = \MNT\Api\Transaction::list_by_user(
 );
 
 // API returns array directly, not wrapped in 'transactions' key
-$all_transactions = is_array($transactions_result) ? $transactions_result : [];
+$wallet_transactions = is_array($transactions_result) ? $transactions_result : [];
+
+// Add source marker to wallet transactions
+foreach ($wallet_transactions as &$tx) {
+    $tx['source'] = 'Wallet';
+}
+unset($tx);
+
+// Fetch escrow transactions from API
+$escrow_transactions = [];
+if (class_exists('MNT\Api\Escrow')) {
+    $escrow_result = \MNT\Api\Escrow::get_all_transactions($user_id, 'client');
+    if (is_array($escrow_result)) {
+        foreach ($escrow_result as $escrow_tx) {
+            // Get project title if project_id exists
+            $project_reference = 'Escrow #' . substr($escrow_tx['id'] ?? '', 0, 8);
+            if (!empty($escrow_tx['project_id'])) {
+                $project_id = intval($escrow_tx['project_id']);
+                $project = get_post($project_id);
+                if ($project) {
+                    $project_reference = 'Project: ' . $project->post_title;
+                }
+            }
+            
+            // Transform escrow transaction to match wallet transaction format
+            $escrow_transactions[] = [
+                'id' => $escrow_tx['id'] ?? '',
+                'type' => 'escrow_transaction',
+                'amount' => $escrow_tx['amount'] ?? 0,
+                'status' => strtolower($escrow_tx['status'] ?? 'pending'),
+                'reference_code' => $project_reference,
+                'timestamp' => $escrow_tx['created_at'] ?? date('Y-m-d H:i:s'),
+                'source' => 'Escrow',
+                'finalized_at' => $escrow_tx['finalized_at'] ?? null,
+                'project_id' => $escrow_tx['project_id'] ?? null
+            ];
+        }
+    }
+}
+
+// Merge wallet and escrow transactions
+$all_transactions = array_merge($wallet_transactions, $escrow_transactions);
+
+// Sort by timestamp descending (newest first)
+usort($all_transactions, function($a, $b) {
+    return strtotime($b['timestamp'] ?? '') - strtotime($a['timestamp'] ?? '');
+});
 
 // Apply search filter if provided
 if (!empty($search_query)) {
@@ -179,19 +225,21 @@ $balance = $wallet_result['balance'] ?? 0;
                         <th>Type</th>
                         <th>Reference</th>
                         <th>Amount</th>
+                        <th>Source</th>
                         <th>Status</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php foreach ($transactions as $tx): ?>
                         <?php
-                        // API returns: id, type, amount, status, reference_code, timestamp
+                        // API returns: id, type, amount, status, reference_code, timestamp, source
                         $tx_type = strtolower($tx['type'] ?? 'unknown');
                         $amount = floatval($tx['amount'] ?? 0);
                         $status = strtolower($tx['status'] ?? 'pending');
                         $date = $tx['timestamp'] ?? '';
                         $reference = $tx['reference_code'] ?? '';
                         $tx_id = $tx['id'] ?? '';
+                        $source = $tx['source'] ?? 'Wallet';
                         
                         // Determine if credit or debit based on transaction type
                         $is_credit = in_array($tx_type, ['deposit', 'escrow_release', 'escrow_refund', 'transfer_received', 'credit']);
@@ -222,6 +270,11 @@ $balance = $wallet_result['balance'] ?? 0;
                             </td>
                             <td class="tx-amount <?php echo esc_attr($amount_class); ?>">
                                 <strong><?php echo $amount_prefix; ?>₦<?php echo number_format($amount, 2); ?></strong>
+                            </td>
+                            <td class="tx-source">
+                                <span class="source-badge source-<?php echo esc_attr(strtolower($source)); ?>">
+                                    <?php echo esc_html($source); ?>
+                                </span>
                             </td>
                             <td class="tx-status">
                                 <span class="status-badge status-<?php echo esc_attr($status); ?>">

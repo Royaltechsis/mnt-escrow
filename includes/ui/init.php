@@ -16,6 +16,7 @@ class Init {
         add_shortcode('mnt_escrow_list', [__CLASS__, 'escrow_list_shortcode']);
         add_shortcode('mnt_create_wallet', [__CLASS__, 'create_wallet_shortcode']);
         add_shortcode('mnt_escrow_deposit', [__CLASS__, 'escrow_deposit_shortcode']);
+            
         
         // AJAX handlers
         add_action('wp_ajax_mnt_create_escrow_transaction', [__CLASS__, 'handle_create_escrow_ajax']);

@@ -4,6 +4,20 @@ namespace MNT\Api;
 class Escrow {
 
     /**
+     * Get all transactions for a user (client or merchant)
+     * @param int $user_id
+     * @param string $actor (client|merchant)
+     * @return array|false
+     */
+    public static function get_all_transactions($user_id, $actor = 'client') {
+        $params = [
+            'user_id' => (string)$user_id,
+            'actor' => $actor
+        ];
+        return Client::get('/escrow/get_all_transactions', $params);
+    }
+
+    /**
      * Release funds from client to escrow (custom endpoint)
      * @param int $user_id
      * @param int $project_id
