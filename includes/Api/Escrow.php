@@ -123,4 +123,73 @@ class Escrow {
         }
         return Client::post('/escrow/list', $data);
     }
+
+    /**
+     * Client confirm transaction (buyer marks project as completed)
+     * POST /api/escrow/client_confirm
+     * 
+     * @param string $project_id Project ID
+     * @param string $user_id User ID (buyer/client)
+     * @param bool $confirm_status Confirmation status (true = confirmed)
+     * @return array|false API response or false on failure
+     */
+    public static function client_confirm($project_id, $user_id, $confirm_status = true) {
+        $data = [
+            'project_id' => (string)$project_id,
+            'user_id' => (string)$user_id,
+            'confirm_status' => (bool)$confirm_status
+        ];
+        return Client::post('/escrow/client_confirm', $data);
+    }
+
+    /**
+     * Merchant confirm transaction (seller confirms project completion)
+     * POST /api/escrow/merchant_confirm
+     * 
+     * @param string $project_id Project ID
+     * @param string $user_id User ID (seller/merchant)
+     * @param bool $confirm_status Confirmation status (defaults to true)
+     * @return array|false API response or false on failure
+     */
+    public static function merchant_confirm($project_id, $user_id, $confirm_status = true) {
+        $data = [
+            'project_id' => (string)$project_id,
+            'user_id' => (string)$user_id,
+            'confirm_status' => (bool)$confirm_status
+        ];
+        return Client::post('/escrow/merchant_confirm', $data);
+    }
+
+    /**
+     * Release funds from escrow to merchant wallet
+     * POST /api/escrow/merchant_release_funds
+     * Call this after both client and merchant have confirmed
+     * 
+     * @param string $project_id Project ID
+     * @param string $user_id User ID (can be either client or merchant)
+     * @return array|false API response or false on failure
+     */
+    public static function merchant_release_funds($project_id, $user_id) {
+        $data = [
+            'project_id' => (string)$project_id,
+            'user_id' => (string)$user_id
+        ];
+        return Client::post('/escrow/merchant_release_funds', $data);
+    }
+
+    /**
+     * Get escrow details by project ID
+     * GET /api/admin/escrow/get_escrow_by_id
+     * 
+     * @param string $project_id Project ID
+     * @return array|false API response or false on failure
+     */
+    public static function get_escrow_by_id($project_id) {
+        return Client::get('/admin/escrow/get_escrow_by_id', [
+            'project_id' => (string)$project_id
+        ]);
+    }
 }
+
+
+

@@ -13,6 +13,9 @@ class Dashboard {
         add_action('wp_ajax_mnt_admin_resolve_dispute', [__CLASS__, 'handle_resolve_dispute']);
         add_action('wp_ajax_mnt_admin_search_wallet', [__CLASS__, 'handle_wallet_search']);
         add_action('wp_ajax_mnt_find_user', [__CLASS__, 'handle_find_user']);
+        add_action('wp_ajax_mnt_admin_freeze_wallet', [__CLASS__, 'handle_freeze_wallet']);
+        add_action('wp_ajax_mnt_admin_unfreeze_wallet', [__CLASS__, 'handle_unfreeze_wallet']);
+        add_action('wp_ajax_mnt_admin_get_user_transactions', [__CLASS__, 'handle_get_user_transactions']);
     }
 
     /**
@@ -681,6 +684,47 @@ class Dashboard {
     }
 
     /**
+     * Handle freeze wallet
+     */
+    public static function handle_freeze_wallet() {
+        check_ajax_referer('mnt_admin_nonce', 'nonce');
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Unauthorized']);
+        }
+        $wallet_id = sanitize_text_field($_POST['wallet_id'] ?? '');
+        $result = Wallet::freeze($wallet_id);
+        wp_send_json($result);
+    }
+
+    /**
+     * Handle unfreeze wallet
+     */
+    public static function handle_unfreeze_wallet() {
+        check_ajax_referer('mnt_admin_nonce', 'nonce');
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Unauthorized']);
+        }
+        $wallet_id = sanitize_text_field($_POST['wallet_id'] ?? '');
+        $result = Wallet::unfreeze($wallet_id);
+        wp_send_json($result);
+    }
+
+    /**
+     * Handle get user transactions
+     */
+    public static function handle_get_user_transactions() {
+        check_ajax_referer('mnt_admin_nonce', 'nonce');
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Unauthorized']);
+        }
+        $user_id = intval($_POST['user_id'] ?? 0);
+        $start_date = sanitize_text_field($_POST['start_date'] ?? '');
+        $end_date = sanitize_text_field($_POST['end_date'] ?? '');
+        $result = Transaction::list_by_user($user_id, '', null, null, $start_date, $end_date);
+        wp_send_json_success(['transactions' => $result]);
+    }
+
+    /**
      * Handle wallet search
      */
     public static function handle_wallet_search() {
@@ -725,147 +769,353 @@ class Dashboard {
      * Wallets page - Search user wallets
      */
     public static function wallets_page() {
+        // Get all WordPress users
+        $users = get_users(['number' => -1]); // -1 means all users
+        
+        $user_wallets = [];
+        
+        // For each user, check if they have a wallet
+        foreach ($users as $user) {
+            $has_wallet = get_user_meta($user->ID, 'mnt_wallet_created', true);
+            
+            if ($has_wallet) {
+                $wallet_data = Wallet::get_by_user($user->ID);
+                
+                // Debug logging
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log('User ID: ' . $user->ID . ' (' . $user->user_email . ') | Wallet Data: ' . print_r($wallet_data, true));
+                }
+                
+                $user_wallets[] = [
+                    'user' => $user,
+                    'wallet' => $wallet_data
+                ];
+            }
+        }
+        
         ?>
         <div class="wrap mnt-admin-wrap">
-            <h1>Users & Wallets</h1>
-
-            <div class="mnt-wallet-search-section">
-                <h2>Search User Wallet</h2>
-                
-                <div class="mnt-search-form">
-                    <table class="form-table">
-                        <tr>
-                            <th scope="row"><label for="user_search">Search User</label></th>
-                            <td>
-                                <input type="text" id="user_search" class="regular-text" 
-                                       placeholder="Enter user ID, email, or username">
-                                <button type="button" id="search_wallet_btn" class="button button-primary">
-                                    Search Wallet
-                                </button>
-                                <p class="description">Enter WordPress user ID, email address, or username to find their wallet.</p>
-                            </td>
-                        </tr>
+            <h1><?php echo esc_html__('Wallet Management', 'mnt-escrow'); ?></h1>
+            
+            <!-- Debug Output -->
+            <?php if (defined('WP_DEBUG') && WP_DEBUG): ?>
+                <div class="notice notice-info">
+                    <p><strong>Debug Info:</strong></p>
+                    <pre><?php 
+                        echo "Total WordPress Users: " . count($users) . "\n";
+                        echo "Users with Wallets: " . count($user_wallets) . "\n";
+                    ?></pre>
+                </div>
+            <?php endif; ?>
+            
+            <div class="mnt-admin-card">
+                <div class="mnt-admin-card-body">
+                    <table class="wp-list-table widefat fixed striped">
+                        <thead>
+                            <tr>
+                                <th><?php echo esc_html__('Name', 'mnt-escrow'); ?></th>
+                                <th><?php echo esc_html__('Email', 'mnt-escrow'); ?></th>
+                                <th><?php echo esc_html__('Balance', 'mnt-escrow'); ?></th>
+                                <th><?php echo esc_html__('Status', 'mnt-escrow'); ?></th>
+                                <th><?php echo esc_html__('Actions', 'mnt-escrow'); ?></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!empty($user_wallets)): ?>
+                                <?php foreach ($user_wallets as $item): 
+                                    $user = $item['user'];
+                                    $wallet = $item['wallet'];
+                                    $wallet_id = isset($wallet['id']) ? $wallet['id'] : get_user_meta($user->ID, 'mnt_wallet_id', true);
+                                    $balance = isset($wallet['balance']) ? $wallet['balance'] : 0;
+                                    $currency = isset($wallet['currency']) ? $wallet['currency'] : 'NGN';
+                                    $is_frozen = isset($wallet['is_frozen']) ? $wallet['is_frozen'] : false;
+                                ?>
+                                    <tr data-wallet-id="<?php echo esc_attr($wallet_id); ?>" data-user-id="<?php echo esc_attr($user->ID); ?>">
+                                        <td>
+                                            <strong><?php echo esc_html($user->display_name); ?></strong>
+                                            <br><small>ID: <?php echo esc_html($user->ID); ?></small>
+                                        </td>
+                                        <td><?php echo esc_html($user->user_email); ?></td>
+                                        <td>
+                                            <strong><?php echo esc_html($currency); ?> <?php echo esc_html(number_format($balance, 2)); ?></strong>
+                                        </td>
+                                        <td>
+                                            <?php if ($is_frozen): ?>
+                                                <span class="mnt-status-badge mnt-status-frozen"><?php echo esc_html__('Frozen', 'mnt-escrow'); ?></span>
+                                            <?php else: ?>
+                                                <span class="mnt-status-badge mnt-status-active"><?php echo esc_html__('Active', 'mnt-escrow'); ?></span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <button class="button mnt-view-transactions" data-user-id="<?php echo esc_attr($user->ID); ?>"><?php echo esc_html__('View Transactions', 'mnt-escrow'); ?></button>
+                                            <?php if ($wallet_id): ?>
+                                                <?php if ($is_frozen): ?>
+                                                    <button class="button mnt-unfreeze-wallet" data-wallet-id="<?php echo esc_attr($wallet_id); ?>"><?php echo esc_html__('Unfreeze', 'mnt-escrow'); ?></button>
+                                                <?php else: ?>
+                                                    <button class="button mnt-freeze-wallet" data-wallet-id="<?php echo esc_attr($wallet_id); ?>"><?php echo esc_html__('Freeze', 'mnt-escrow'); ?></button>
+                                                <?php endif; ?>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr>
+                                    <td colspan="5" style="text-align: center;"><?php echo esc_html__('No users with wallets found', 'mnt-escrow'); ?></td>
+                                </tr>
+                            <?php endif; ?>
+                        </tbody>
                     </table>
                 </div>
+            </div>
+        </div>
 
-                <div id="wallet_result" style="display: none; margin-top: 30px;">
-                    <h3>Wallet Information</h3>
-                    <div class="mnt-wallet-card">
-                        <table class="widefat striped">
-                            <tbody id="wallet_details">
-                                <!-- Populated via AJAX -->
-                            </tbody>
-                        </table>
-                    </div>
+        <!-- Transaction History Modal -->
+        <div id="mnt-transaction-modal" class="mnt-modal" style="display:none;">
+            <div class="mnt-modal-content">
+                <span class="mnt-modal-close">&times;</span>
+                <h2><?php echo esc_html__('Transaction History', 'mnt-escrow'); ?></h2>
+                <div class="mnt-date-filters">
+                    <label><?php echo esc_html__('From:', 'mnt-escrow'); ?> <input type="date" id="mnt-start-date" /></label>
+                    <label><?php echo esc_html__('To:', 'mnt-escrow'); ?> <input type="date" id="mnt-end-date" /></label>
+                    <button class="button" id="mnt-filter-transactions"><?php echo esc_html__('Filter', 'mnt-escrow'); ?></button>
                 </div>
-
-                <div id="wallet_error" class="notice notice-error" style="display: none; margin-top: 20px;">
-                    <p id="error_message"></p>
+                <div id="mnt-transaction-content">
+                    <p><?php echo esc_html__('Loading...', 'mnt-escrow'); ?></p>
                 </div>
             </div>
+        </div>
 
-            <style>
-                .mnt-wallet-card {
-                    background: #fff;
-                    border: 1px solid #ccc;
-                    padding: 20px;
-                    border-radius: 4px;
-                    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-                }
-                .mnt-wallet-card table th {
-                    width: 200px;
-                    font-weight: 600;
-                }
-                .mnt-wallet-search-section {
-                    background: #fff;
-                    padding: 20px;
-                    margin-top: 20px;
-                    border: 1px solid #ccc;
-                    border-radius: 4px;
-                }
-                .wallet-status-active {
-                    color: #46b450;
-                    font-weight: 600;
-                }
-                .wallet-status-inactive {
-                    color: #dc3232;
-                    font-weight: 600;
-                }
-            </style>
+        <style>
+            .mnt-status-badge {
+                padding: 4px 12px;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            .mnt-status-active {
+                background: #d4edda;
+                color: #155724;
+            }
+            .mnt-status-frozen {
+                background: #f8d7da;
+                color: #721c24;
+            }
+            .mnt-modal {
+                position: fixed;
+                z-index: 100000;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: 100%;
+                overflow: auto;
+                background-color: rgba(0,0,0,0.4);
+            }
+            .mnt-modal-content {
+                background-color: #fefefe;
+                margin: 5% auto;
+                padding: 20px;
+                border: 1px solid #888;
+                width: 80%;
+                max-width: 900px;
+                border-radius: 8px;
+            }
+            .mnt-modal-close {
+                color: #aaa;
+                float: right;
+                font-size: 28px;
+                font-weight: bold;
+                cursor: pointer;
+            }
+            .mnt-modal-close:hover {
+                color: black;
+            }
+            .mnt-date-filters {
+                margin: 20px 0;
+                display: flex;
+                gap: 15px;
+                align-items: center;
+            }
+            .mnt-date-filters label {
+                display: flex;
+                gap: 8px;
+                align-items: center;
+            }
+            #mnt-transaction-content table {
+                width: 100%;
+                margin-top: 15px;
+            }
+        </style>
 
-            <script>
-            jQuery(document).ready(function($) {
-                $('#search_wallet_btn').on('click', function() {
-                    var searchTerm = $('#user_search').val().trim();
-                    if (!searchTerm) {
-                        alert('Please enter a user ID, email, or username');
-                        return;
-                    }
+        <script>
+        jQuery(document).ready(function($) {
+            var currentUserId = null;
 
-                    var $btn = $(this);
-                    var originalText = $btn.text();
-                    $btn.text('Searching...').prop('disabled', true);
-                    $('#wallet_result').hide();
-                    $('#wallet_error').hide();
+            // View Transactions
+            $('.mnt-view-transactions').on('click', function() {
+                currentUserId = $(this).data('user-id');
+                $('#mnt-transaction-modal').show();
+                loadTransactions(currentUserId);
+            });
 
-                    // First, find the user
-                    $.post(ajaxurl, {
-                        action: 'mnt_find_user',
-                        nonce: mntAdmin.nonce,
-                        search_term: searchTerm
-                    }, function(response) {
-                        if (!response.success) {
-                            $('#error_message').text(response.data.message || 'User not found');
-                            $('#wallet_error').show();
-                            $btn.text(originalText).prop('disabled', false);
-                            return;
+            // Close Modal
+            $('.mnt-modal-close, .mnt-modal').on('click', function(e) {
+                if (e.target === this) {
+                    $('#mnt-transaction-modal').hide();
+                }
+            });
+
+            // Filter Transactions
+            $('#mnt-filter-transactions').on('click', function() {
+                if (currentUserId) {
+                    loadTransactions(currentUserId, $('#mnt-start-date').val(), $('#mnt-end-date').val());
+                }
+            });
+
+            // Load Transactions
+            function loadTransactions(userId, startDate = '', endDate = '') {
+                $('#mnt-transaction-content').html('<p><?php echo esc_js(__('Loading...', 'mnt-escrow')); ?></p>');
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'mnt_admin_get_user_transactions',
+                        nonce: '<?php echo wp_create_nonce('mnt_admin_nonce'); ?>',
+                        user_id: userId,
+                        start_date: startDate,
+                        end_date: endDate
+                    },
+                    success: function(response) {
+                        if (response.success && response.data.transactions) {
+                            displayTransactions(response.data.transactions);
+                        } else {
+                            $('#mnt-transaction-content').html('<p><?php echo esc_js(__('No transactions found', 'mnt-escrow')); ?></p>');
                         }
-
-                        var userId = response.data.user_id;
-
-                        // Now search wallet
-                        $.post(ajaxurl, {
-                            action: 'mnt_admin_search_wallet',
-                            nonce: mntAdmin.nonce,
-                            user_id: userId
-                        }, function(walletResponse) {
-                            $btn.text(originalText).prop('disabled', false);
-
-                            if (walletResponse.success) {
-                                var wallet = walletResponse.data.wallet;
-                                var user = walletResponse.data.user;
-                                
-                                var html = '<tr><th>WordPress User ID:</th><td>' + user.id + '</td></tr>';
-                                html += '<tr><th>Display Name:</th><td>' + user.display_name + '</td></tr>';
-                                html += '<tr><th>Email:</th><td>' + user.email + '</td></tr>';
-                                html += '<tr><th>Wallet ID:</th><td><code>' + (wallet.id || 'N/A') + '</code></td></tr>';
-                                html += '<tr><th>Owner ID:</th><td><code>' + (wallet.owner_id || 'N/A') + '</code></td></tr>';
-                                html += '<tr><th>Currency:</th><td>' + (wallet.currency || 'NGN') + '</td></tr>';
-                                html += '<tr><th>Balance:</th><td><strong>₦' + parseFloat(wallet.balance || 0).toLocaleString('en-NG', {minimumFractionDigits: 2}) + '</strong></td></tr>';
-                                html += '<tr><th>Frozen Status:</th><td>' + (wallet.is_frozen ? '<span class="wallet-status-inactive">🔒 Frozen</span>' : '<span class="wallet-status-active">✓ Active</span>') + '</td></tr>';
-                                html += '<tr><th>Created At:</th><td>' + (wallet.created_at || 'N/A') + '</td></tr>';
-                                html += '<tr><th>Updated At:</th><td>' + (wallet.updated_at || 'N/A') + '</td></tr>';
-                                
-                                $('#wallet_details').html(html);
-                                $('#wallet_result').show();
-                            } else {
-                                $('#error_message').text(walletResponse.data.message || 'Failed to retrieve wallet');
-                                $('#wallet_error').show();
-                            }
-                        });
-                    });
+                    },
+                    error: function() {
+                        $('#mnt-transaction-content').html('<p><?php echo esc_js(__('Error loading transactions', 'mnt-escrow')); ?></p>');
+                    }
                 });
+            }
 
-                // Allow search on Enter key
-                $('#user_search').on('keypress', function(e) {
-                    if (e.which === 13) {
-                        $('#search_wallet_btn').click();
+            // Display Transactions
+            function displayTransactions(transactions) {
+                if (!transactions || transactions.length === 0) {
+                    $('#mnt-transaction-content').html('<p><?php echo esc_js(__('No transactions found', 'mnt-escrow')); ?></p>');
+                    return;
+                }
+                
+                var html = '<table class="wp-list-table widefat fixed striped"><thead><tr>';
+                html += '<th><?php echo esc_js(__('Date', 'mnt-escrow')); ?></th>';
+                html += '<th><?php echo esc_js(__('Type', 'mnt-escrow')); ?></th>';
+                html += '<th><?php echo esc_js(__('Amount', 'mnt-escrow')); ?></th>';
+                html += '<th><?php echo esc_js(__('Status', 'mnt-escrow')); ?></th>';
+                html += '<th><?php echo esc_js(__('Description', 'mnt-escrow')); ?></th>';
+                html += '</tr></thead><tbody>';
+                
+                transactions.forEach(function(tx) {
+                    html += '<tr>';
+                    html += '<td>' + (tx.created_at || '—') + '</td>';
+                    html += '<td>' + (tx.type || '—') + '</td>';
+                    html += '<td>' + (tx.currency || 'USD') + ' ' + parseFloat(tx.amount || 0).toFixed(2) + '</td>';
+                    html += '<td>' + (tx.status || '—') + '</td>';
+                    html += '<td>' + (tx.description || '—') + '</td>';
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table>';
+                $('#mnt-transaction-content').html(html);
+            }
+
+            // Freeze Wallet
+            $('.mnt-freeze-wallet').on('click', function() {
+                var walletId = $(this).data('wallet-id');
+                
+                if (!confirm('<?php echo esc_js(__('Are you sure you want to freeze this wallet?', 'mnt-escrow')); ?>')) {
+                    return;
+                }
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'mnt_admin_freeze_wallet',
+                        nonce: '<?php echo wp_create_nonce('mnt_admin_nonce'); ?>',
+                        wallet_id: walletId
+                    },
+                    success: function(response) {
+                        if (response.success || !response.error) {
+                            location.reload();
+                        } else {
+                            alert(response.message || '<?php echo esc_js(__('Failed to freeze wallet', 'mnt-escrow')); ?>');
+                        }
+                    },
+                    error: function() {
+                        alert('<?php echo esc_js(__('Error freezing wallet', 'mnt-escrow')); ?>');
                     }
                 });
             });
-            </script>
-        </div>
+
+            // Unfreeze Wallet
+            $('.mnt-unfreeze-wallet').on('click', function() {
+                var walletId = $(this).data('wallet-id');
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'mnt_admin_unfreeze_wallet',
+                        nonce: '<?php echo wp_create_nonce('mnt_admin_nonce'); ?>',
+                        wallet_id: walletId
+                    },
+                    success: function(response) {
+                        if (response.success || !response.error) {
+                            location.reload();
+                        } else {
+                            alert(response.message || '<?php echo esc_js(__('Failed to unfreeze wallet', 'mnt-escrow')); ?>');
+                        }
+                    },
+                    error: function() {
+                        alert('<?php echo esc_js(__('Error unfreezing wallet', 'mnt-escrow')); ?>');
+                    }
+                });
+            });
+        });
+        </script>
         <?php
+    }
+
+    /**
+     * Get WordPress user by owner_id from user meta
+     */
+    private static function get_user_by_owner_id($owner_id) {
+        // First, try to find by mnt_wallet_uuid (the backend's UUID)
+        $users = get_users([
+            'meta_key' => 'mnt_wallet_uuid',
+            'meta_value' => $owner_id,
+            'number' => 1
+        ]);
+        
+        if (!empty($users)) {
+            return $users[0];
+        }
+        
+        // If not found, the owner_id might be the WordPress user ID itself
+        // (if the API stores user_id as owner_id)
+        if (is_numeric($owner_id)) {
+            $user = get_userdata(intval($owner_id));
+            if ($user) {
+                return $user;
+            }
+        }
+        
+        // Last resort: check if owner_id matches mnt_wallet_id
+        $users = get_users([
+            'meta_key' => 'mnt_wallet_id',
+            'meta_value' => $owner_id,
+            'number' => 1
+        ]);
+        
+        return !empty($users) ? $users[0] : null;
     }
 
     // Helper methods for stats

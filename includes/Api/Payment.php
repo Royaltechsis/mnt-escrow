@@ -26,8 +26,17 @@ class Payment {
 
     /**
      * Process webhook from Paystack
+     * This endpoint will be called by Paystack when payment is successful
      */
-    /* public static function paystack_webhook($payload) {
-        return Client::post('/payment/paystack/webhook', $payload);
-    } */
+    public static function paystack_webhook($payload) {
+        return Client::post('/paystack/webhook', $payload);
+    }
+    
+    /**
+     * Manually trigger webhook verification for pending deposits
+     * This is useful when webhook wasn't received or needs to be retried
+     */
+    public static function trigger_webhook() {
+        return Client::post('/paystack/webhook', []);
+    }
 }

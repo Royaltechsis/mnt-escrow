@@ -12,33 +12,54 @@ $wallet_id = $wallet_result['wallet_id'] ?? $wallet_result['user_id'] ?? '';
 // $transactions = $transactions_result['transactions'] ?? [];
 ?>
 
-<div class="mnt-wallet-dashboard">
-    <div class="mnt-wallet-header">
-        <h2>My Wallet</h2>
-        <div class="wallet-id">Wallet ID: <?php echo esc_html($wallet_id); ?></div>
-    </div>
-
-    <div class="mnt-wallet-balance-card">
-        <div class="balance-label">Available Balance</div>
-        <div class="balance-amount">₦<?php echo number_format($balance, 2); ?></div>
-        <div class="balance-actions">
-            <a href="#deposit" class="mnt-btn mnt-btn-primary" id="show-deposit">Deposit</a>
-            <a href="#withdraw" class="mnt-btn mnt-btn-secondary" id="show-withdraw">Withdraw</a>
-            <a href="#transfer" class="mnt-btn mnt-btn-secondary" id="show-transfer">Transfer</a>
+<div class="tk-project-wrapper">
+    <div class="tk-project-box">
+        <div class="tk-counterinfo tk-wallet-balance">
+            <div class="tk-counterinfo_head">
+                <h5><?php esc_html_e('Wallet Balance', 'taskbot'); ?></h5>
+                <span class="tk-wallet-id"><?php esc_html_e('Wallet ID:', 'taskbot'); ?> <?php echo esc_html($wallet_id); ?></span>
+            </div>
+            <div class="tk-wallet-amount">
+                <strong class="tk-amount-value">₦<?php echo number_format($balance, 2); ?></strong>
+                <span class="tk-amount-label"><?php esc_html_e('Available Balance', 'taskbot'); ?></span>
+            </div>
+            <ul class="tk-wallet-actions">
+                <li>
+                    <a href="javascript:void(0);" class="tk-btn-border" id="show-deposit">
+                        <i class="tb-icon-plus-circle"></i>
+                        <?php esc_html_e('Deposit', 'taskbot'); ?>
+                    </a>
+                </li>
+                <li>
+                    <a href="javascript:void(0);" class="tk-btn-border" id="show-withdraw">
+                        <i class="tb-icon-download"></i>
+                        <?php esc_html_e('Withdraw', 'taskbot'); ?>
+                    </a>
+                </li>
+               <!--  <li>
+                    <a href="javascript:void(0);" class="tk-btn-border" id="show-transfer">
+                        <i class="tb-icon-arrow-right-circle"></i>
+                        <?php esc_html_e('Transfer', 'taskbot'); ?>
+                    </a>
+                </li> -->
+            </ul>
         </div>
     </div>
+</div>
 
-    <div class="mnt-wallet-actions" style="display:none;">
-        <div id="deposit-section" class="action-section">
+<div class="tk-project-wrapper" id="wallet-action-section" style="display:none;">
+    <div class="tk-project-box">
+        <div id="deposit-section" class="wallet-action-content">
             <?php echo do_shortcode('[mnt_deposit_form]'); ?>
         </div>
-        <div id="withdraw-section" class="action-section">
+        <div id="withdraw-section" class="wallet-action-content">
             <?php echo do_shortcode('[mnt_withdraw_form]'); ?>
         </div>
-        <div id="transfer-section" class="action-section">
+        <div id="transfer-section" class="wallet-action-content">
             <?php echo do_shortcode('[mnt_transfer_form]'); ?>
         </div>
     </div>
+</div>
 
    <!--  <div class="mnt-recent-transactions">
         <h3>Recent Transactions</h3>
@@ -73,27 +94,104 @@ $wallet_id = $wallet_result['wallet_id'] ?? $wallet_result['user_id'] ?? '';
     </div> -->
 </div>
 
+<style>
+.tk-wallet-balance {
+    text-align: center;
+    padding: 30px 20px;
+}
+.tk-counterinfo_head {
+    margin-bottom: 20px;
+}
+.tk-counterinfo_head h5 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #1e293b;
+}
+.tk-wallet-id {
+    font-size: 13px;
+    color: #64748b;
+}
+.tk-wallet-amount {
+    margin: 25px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.tk-amount-value {
+    font-size: 42px;
+    font-weight: 700;
+    color: #0f172a;
+    line-height: 1.2;
+}
+.tk-amount-label {
+    font-size: 14px;
+    color: #64748b;
+    margin-top: 8px;
+}
+.tk-wallet-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    list-style: none;
+    padding: 0;
+    margin: 25px 0 0 0;
+    flex-wrap: wrap;
+}
+.tk-wallet-actions li {
+    margin: 0;
+}
+.tk-wallet-actions .tk-btn-border {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+.tk-wallet-actions .tk-btn-border i {
+    font-size: 16px;
+}
+.wallet-action-content {
+    display: none;
+}
+.wallet-action-content.active {
+    display: block;
+}
+</style>
+
 <script>
 jQuery(document).ready(function($) {
     $('#show-deposit').on('click', function(e) {
         e.preventDefault();
-        $('.action-section').hide();
-        $('#deposit-section').show();
-        $('.mnt-wallet-actions').show();
+        $('.wallet-action-content').hide().removeClass('active');
+        $('#deposit-section').show().addClass('active');
+        $('#wallet-action-section').slideDown();
+        $('html, body').animate({
+            scrollTop: $('#wallet-action-section').offset().top - 100
+        }, 500);
     });
 
     $('#show-withdraw').on('click', function(e) {
         e.preventDefault();
-        $('.action-section').hide();
-        $('#withdraw-section').show();
-        $('.mnt-wallet-actions').show();
+        $('.wallet-action-content').hide().removeClass('active');
+        $('#withdraw-section').show().addClass('active');
+        $('#wallet-action-section').slideDown();
+        $('html, body').animate({
+            scrollTop: $('#wallet-action-section').offset().top - 100
+        }, 500);
     });
 
     $('#show-transfer').on('click', function(e) {
         e.preventDefault();
-        $('.action-section').hide();
-        $('#transfer-section').show();
-        $('.mnt-wallet-actions').show();
+        $('.wallet-action-content').hide().removeClass('active');
+        $('#transfer-section').show().addClass('active');
+        $('#wallet-action-section').slideDown();
+        $('html, body').animate({
+            scrollTop: $('#wallet-action-section').offset().top - 100
+        }, 500);
     });
 });
 </script>

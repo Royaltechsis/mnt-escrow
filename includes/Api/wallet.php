@@ -51,6 +51,34 @@ class wallet {
     }
 
     /**
+     * Get all wallets (admin endpoint)
+     * GET /api/admin/wallet/get_all_wallets
+     */
+    public static function get_all_wallets() {
+        return Client::get('/admin/wallet/get_all_wallets', []);
+    }
+
+    /**
+     * Freeze wallet (admin endpoint)
+     * POST /api/admin/wallet/freeze
+     */
+    public static function freeze($wallet_id) {
+        return Client::post('/admin/wallet/freeze', [
+            'wallet_id' => (string)$wallet_id
+        ]);
+    }
+
+    /**
+     * Unfreeze wallet (admin endpoint)
+     * POST /api/admin/wallet/unfreeze
+     */
+    public static function unfreeze($wallet_id) {
+        return Client::post('/admin/wallet/unfreeze', [
+            'wallet_id' => (string)$wallet_id
+        ]);
+    }
+
+    /**
      * Credit wallet (admin endpoint)
      * POST /api/admin/wallet/credit
      * Schema: TransactionRequestDTO {user_id: string, email: string, currency: CurrencyCode, 

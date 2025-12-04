@@ -1,5 +1,32 @@
 /* MyNaijaTask Escrow - Frontend Styles */
 
+/* Spinning Animation */
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.spinning {
+    display: inline-block;
+    animation: spin 1s linear infinite;
+}
+
+/* Release Funds Button Hover Effect */
+#mnt-release-funds-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
+}
+
+#mnt-release-funds-btn:active {
+    transform: translateY(0);
+}
+
+#mnt-release-funds-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
 /* Wallet Dashboard */
 .mnt-wallet-dashboard {
     max-width: 1200px;
@@ -109,6 +136,174 @@
     margin-bottom: 20px;
 }
 
+/* Taskbot Theme Form Styling */
+.tk-themeform {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    overflow: hidden;
+    margin-bottom: 30px;
+}
+
+.tk-themeform__head {
+    background: #f8f9fa;
+    padding: 20px 25px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.tk-themeform__head h5 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #1f2937;
+}
+
+.tk-themeform fieldset {
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+
+.tk-themeform__wrap {
+    padding: 25px;
+}
+
+.tk-themeform .form-group {
+    margin-bottom: 25px;
+}
+
+.tk-themeform .form-group:last-child {
+    margin-bottom: 0;
+}
+
+.tk-label {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    color: #374151;
+    margin-bottom: 8px;
+}
+
+.tk-placeholderholder {
+    position: relative;
+}
+
+.tk-themeinput {
+    width: 100%;
+    padding: 12px 16px;
+    font-size: 15px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    transition: all 0.3s ease;
+    background: #fff;
+    color: #1f2937;
+}
+
+.tk-themeinput:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.tk-themeinput::placeholder {
+    color: #9ca3af;
+}
+
+.tk-themeinput:disabled {
+    background: #f3f4f6;
+    cursor: not-allowed;
+}
+
+.tk-input-help {
+    display: block;
+    font-size: 13px;
+    color: #6b7280;
+    margin-top: 6px;
+}
+
+.tk-btnarea {
+    padding-top: 15px;
+    margin-top: 25px;
+    border-top: 1px solid #e5e7eb;
+}
+
+.tk-btn-solid-lg {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 14px 32px;
+    font-size: 16px;
+    font-weight: 600;
+    background: #667eea;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-decoration: none;
+}
+
+.tk-btn-solid-lg:hover {
+    background: #5568d3;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.tk-btn-solid-lg:active {
+    transform: translateY(0);
+}
+
+.tk-btn-solid-lg:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.tk-btn-solid-lg i {
+    font-size: 18px;
+}
+
+/* Alert Styling for Taskbot Theme */
+.tk-alert {
+    padding: 14px 18px;
+    border-radius: 6px;
+    font-size: 14px;
+    line-height: 1.5;
+    margin-bottom: 20px;
+    border-left: 4px solid;
+    animation: slideDown 0.3s ease;
+}
+
+.tk-alert-success {
+    background: #d1fae5;
+    color: #065f46;
+    border-color: #10b981;
+}
+
+.tk-alert-warning {
+    background: #fee2e2;
+    color: #991b1b;
+    border-color: #ef4444;
+}
+
+.tk-alert-info {
+    background: #dbeafe;
+    color: #1e40af;
+    border-color: #3b82f6;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 .form-group {
     margin-bottom: 20px;
 }
@@ -121,7 +316,8 @@
 }
 
 .form-group input,
-.form-group select {
+.form-group select,
+.form-group textarea {
     width: 100%;
     padding: 12px;
     border: 1px solid #ddd;
@@ -130,7 +326,8 @@
 }
 
 .form-group input:focus,
-.form-group select:focus {
+.form-group select:focus,
+.form-group textarea:focus {
     outline: none;
     border-color: #667eea;
     box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);

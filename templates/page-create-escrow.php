@@ -1,87 +1,6 @@
 <?php
-// Add inline styles for the escrow form
-echo '<style>
-.mnt-escrow-create-form {
-    max-width: 420px;
-    margin: 40px auto;
-    padding: 32px 28px 24px 28px;
-    background: #fff;
-    border-radius: 12px;
-    box-shadow: 0 2px 16px rgba(0,0,0,0.07);
-    font-family: inherit;
-}
-.mnt-escrow-create-form h2 {
-    text-align: center;
-    margin-bottom: 28px;
-    font-size: 1.5rem;
-    color: #222;
-    font-weight: 600;
-}
-.mnt-escrow-create-form .form-group {
-    margin-bottom: 22px;
-}
-.mnt-escrow-create-form label {
-    display: block;
-    margin-bottom: 7px;
-    font-weight: 500;
-    color: #444;
-}
-.mnt-escrow-create-form input[type="number"] {
-    width: 100%;
-    padding: 10px 12px;
-    border: 1px solid #d1d5db;
-    border-radius: 6px;
-    font-size: 1rem;
-    background: #fafbfc;
-    transition: border 0.2s;
-}
-.mnt-escrow-create-form input[type="number"]:focus {
-    border-color: #0073aa;
-    outline: none;
-}
-.mnt-escrow-create-form .mnt-btn {
-    width: 100%;
-    padding: 12px 0;
-    background: linear-gradient(90deg, #0073aa 0%, #005177 100%);
-    color: #fff;
-    border: none;
-    border-radius: 6px;
-    font-size: 1.1rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s;
-    margin-top: 10px;
-}
-.mnt-escrow-create-form .mnt-btn:hover {
-    background: linear-gradient(90deg, #005177 0%, #0073aa 100%);
-}
-.mnt-escrow-create-form .notice {
-    margin-bottom: 18px;
-    padding: 10px 14px;
-    border-radius: 5px;
-    font-size: 1rem;
-}
-.mnt-escrow-create-form .notice-success {
-    background: #e6f7ec;
-    color: #217a3c;
-    border: 1px solid #b7e4c7;
-}
-.mnt-escrow-create-form .notice-error {
-    background: #fbeaea;
-    color: #b30000;
-    border: 1px solid #f5c2c7;
-}
-</style>';
-/*
-Template Name: Create Escrow Transaction
-Description: Page for buyers to create an escrow for a project/task and hire a seller directly (no WooCommerce).
-*/
-
-
-if (!is_user_logged_in()) {
-    wp_redirect(wp_login_url(get_permalink()));
-    exit;
-}
+// This template is included by the theme page-create-escrow.php
+// Do not call get_header() or get_footer() here
 
 $escrow_response = null;
 $escrow_error = null;
@@ -93,6 +12,14 @@ $merchant_id = isset($_GET['merchant_id']) ? intval($_GET['merchant_id']) : 0;
 $project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
 $amount = isset($_GET['amount']) ? floatval($_GET['amount']) : 0;
 $proposal_id = isset($_GET['proposal_id']) ? intval($_GET['proposal_id']) : 0;
+$milestone_key = isset($_GET['milestone_key']) ? sanitize_text_field($_GET['milestone_key']) : '';
+$milestone_title = isset($_GET['milestone_title']) ? sanitize_text_field($_GET['milestone_title']) : '';
+
+// DEBUG: Log URL parameters
+error_log('CREATE ESCROW DEBUG - URL Params:');
+error_log('milestone_key: ' . $milestone_key);
+error_log('milestone_title: ' . $milestone_title);
+error_log('proposal_id: ' . $proposal_id);
 
 // Fetch user details
 $buyer = get_userdata($client_id);
@@ -101,6 +28,50 @@ $seller = get_userdata($merchant_id);
 // Fetch project and proposal details
 $project = $project_id ? get_post($project_id) : null;
 $proposal = $proposal_id ? get_post($proposal_id) : null;
+
+// Fetch milestone details if milestone_key is provided
+$milestone = null;
+$is_milestone = false;
+if ($proposal_id) {
+    // Get proposal meta which contains milestones
+    $proposal_meta = get_post_meta($proposal_id, 'proposal_meta', true);
+    $proposal_meta = !empty($proposal_meta) ? $proposal_meta : array();
+    
+    $proposal_type = !empty($proposal_meta['proposal_type']) ? $proposal_meta['proposal_type'] : '';
+    $milestones = !empty($proposal_meta['milestone']) ? $proposal_meta['milestone'] : array();
+    $has_milestones = !empty($milestones) && is_array($milestones) && count($milestones) > 0;
+    
+    // A proposal is considered milestone-based if it has milestone data OR proposal_type is 'milestone'
+    $is_milestone = ($proposal_type === 'milestone' || $has_milestones);
+    
+    if ($is_milestone && !empty($milestone_key) && $has_milestones) {
+        // Search for milestone by key
+        foreach ($milestones as $ms_key => $ms) {
+            if ($ms_key === $milestone_key) {
+                $milestone = $ms;
+                $milestone['key'] = $ms_key; // Add the key to the milestone data
+                break;
+            }
+        }
+    }
+}
+
+// Check if there's an existing pending escrow for this project
+$existing_escrow_status = null;
+if ($project_id) {
+    $existing_escrow_status = get_post_meta($project_id, 'mnt_escrow_status', true);
+    // If existing escrow is pending, populate response to show modal
+    if (strtoupper($existing_escrow_status) === 'PENDING') {
+        $escrow_response = [
+            'project_id' => $project_id,
+            'status' => $existing_escrow_status,
+            'amount' => get_post_meta($project_id, 'mnt_escrow_amount', true),
+            'client_id' => get_post_meta($project_id, 'mnt_escrow_buyer', true),
+            'merchant_id' => get_post_meta($project_id, 'mnt_escrow_seller', true),
+            'message' => 'Existing pending escrow found for this project'
+        ];
+    }
+}
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']) && wp_verify_nonce($_POST['create_escrow_nonce'], 'create_escrow')) {
@@ -135,12 +106,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
             echo 'merchant_id: ' . $merchant_id . ' | client_id: ' . $client_id . ' | amount: ' . $amount . '<br>';
             echo '</div>';
             $escrow_result = \MNT\Api\Escrow::create((string)$merchant_id, (string)$client_id, $amount, $escrow_project_id);
-            if (!empty($escrow_result['escrow_id'])) {
-                // Deduct wallet from buyer
-                $wallet_result = \MNT\Api\wallet::admin_debit($client_id, $amount, 'Escrow for project #' . $project_id);
-
+            // Check if escrow was created successfully (API returns status, message, project_id)
+            $escrow_success = !empty($escrow_result['status']) || !empty($escrow_result['project_id']) || (isset($escrow_result['message']) && stripos($escrow_result['message'], 'success') !== false);
+            
+            if ($escrow_success) {
                 // Link escrow to project
-                update_post_meta($project_id, 'mnt_escrow_id', $escrow_result['escrow_id']);
+                $escrow_id = $escrow_result['escrow_id'] ?? 'API-' . $project_id;
+                update_post_meta($project_id, 'mnt_escrow_id', $escrow_id);
                 update_post_meta($project_id, 'mnt_escrow_amount', $amount);
                 update_post_meta($project_id, 'mnt_escrow_buyer', $client_id);
                 update_post_meta($project_id, 'mnt_escrow_seller', $merchant_id);
@@ -150,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                 // Optionally update proposal status if proposal_id is passed
                 if (!empty($proposal_id)) {
                     wp_update_post(['ID' => $proposal_id, 'post_status' => 'hired']);
-                    update_post_meta($proposal_id, 'mnt_escrow_id', $escrow_result['escrow_id']);
+                    update_post_meta($proposal_id, 'mnt_escrow_id', $escrow_id);
                     update_post_meta($proposal_id, 'project_id', $project_id);
                 }
                 $escrow_response = $escrow_result;
@@ -174,131 +146,536 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
     }
 }
 ?>
-<div class="mnt-escrow-create-form">
-    <h2>Create Escrow for Project</h2>
 
-    <!-- Buyer Details -->
-    <div class="form-group">
-        <label>Buyer (Client)</label>
-        <div style="background:#f6f8fa;padding:10px 12px;border-radius:6px;">
-            <strong>ID:</strong> <?php echo esc_html($buyer ? $buyer->ID : ''); ?><br>
-            <strong>Name:</strong> <?php echo esc_html($buyer ? $buyer->display_name : ''); ?><br>
-            <strong>Email:</strong> <?php echo esc_html($buyer ? $buyer->user_email : ''); ?>
+<div class="tb-dhb-mainheading">
+    <div>
+        <h4><?php esc_html_e('Create Escrow Transaction', 'taskbot'); ?></h4>
+        <div class="tk-sortby">
+            <span><?php esc_html_e('Secure payment for project hiring', 'taskbot'); ?></span>
         </div>
     </div>
-    <!-- Seller Details -->
-    <div class="form-group">
-        <label>Seller (Merchant)</label>
-        <div style="background:#f6f8fa;padding:10px 12px;border-radius:6px;">
-            <strong>ID:</strong> <?php echo esc_html($seller ? $seller->ID : ''); ?><br>
-            <strong>Name:</strong> <?php echo esc_html($seller ? $seller->display_name : ''); ?><br>
-            <strong>Email:</strong> <?php echo esc_html($seller ? $seller->user_email : ''); ?>
-        </div>
+    <div class="tb-dhb-mainheading-right">
+        <a href="javascript:history.back()" class="tb-btn tb-btn-cancel">
+            <i class="tb-icon-x"></i> <?php esc_html_e('Cancel', 'taskbot'); ?>
+        </a>
     </div>
-    <!-- Project Details -->
-    <div class="form-group">
-        <label>Project Details</label>
-        <div style="background:#f6f8fa;padding:10px 12px;border-radius:6px;">
-            <?php if ($project): ?>
-                <strong>ID:</strong> <?php echo esc_html($project->ID); ?><br>
-                <strong>Title:</strong> <?php echo esc_html($project->post_title); ?><br>
-                <strong>Status:</strong> <?php echo esc_html($project->post_status); ?><br>
-            <?php else: ?>
-                <em>No project found.</em>
-            <?php endif; ?>
-        </div>
-    </div>
-    <!-- Proposal Details -->
-    <div class="form-group">
-        <label>Proposal Details</label>
-        <div style="background:#f6f8fa;padding:10px 12px;border-radius:6px;">
-            <?php if ($proposal): ?>
-                <strong>ID:</strong> <?php echo esc_html($proposal->ID); ?><br>
-                <strong>Title:</strong> <?php echo esc_html($proposal->post_title); ?><br>
-                <strong>Status:</strong> <?php echo esc_html($proposal->post_status); ?><br>
-            <?php else: ?>
-                <em>No proposal found.</em>
-            <?php endif; ?>
-        </div>
-    </div>
+</div>
 
-    <?php if ($escrow_response || (isset($escrow_result['detail']) && $escrow_result['detail'] === 'Project already exist.')): ?>
-        <div class="notice notice-success">
-            <?php if ($escrow_response): ?>
-                <strong>Escrow Created!</strong><br>
-                <strong>Escrow ID:</strong> <?php echo esc_html($escrow_response['escrow_id']); ?><br>
-                <strong>Status:</strong> <?php echo esc_html($escrow_response['status'] ?? ''); ?><br>
-                <strong>Amount:</strong> ₦<?php echo esc_html($escrow_response['amount'] ?? ''); ?><br>
-                <strong>Merchant ID:</strong> <?php echo esc_html($escrow_response['merchant_id'] ?? ''); ?><br>
-                <strong>Client ID:</strong> <?php echo esc_html($escrow_response['client_id'] ?? ''); ?><br>
-                <strong>Project ID:</strong> <?php echo esc_html($escrow_response['project_id'] ?? ''); ?><br>
-                <?php if (!empty($escrow_response['message'])): ?>
-                    <br><strong>Message:</strong> <?php echo esc_html($escrow_response['message']); ?>
-                <?php endif; ?>
-                <details style="margin-top:12px;">
-                    <summary style="cursor:pointer;font-weight:600;">Show Raw API Response</summary>
-                    <pre style="background:#222;color:#fff;padding:12px;border-radius:6px;overflow-x:auto;font-size:13px;max-height:300px;">
-<?php echo esc_html(print_r($escrow_response, true)); ?>
-                    </pre>
-                </details>
-            <?php else: ?>
-                <strong>Escrow Already Exists for this Project.</strong><br>
-                <strong>Project ID:</strong> <?php echo esc_html($project_id); ?><br>
-                <strong>Merchant ID:</strong> <?php echo esc_html($merchant_id); ?><br>
-                <strong>Client ID:</strong> <?php echo esc_html($client_id); ?><br>
-                <strong>Amount:</strong> ₦<?php echo esc_html($amount); ?><br>
-                <br><strong>Message:</strong> Project already exists. You can move funds to escrow below.
-                <details style="margin-top:12px;">
-                    <summary style="cursor:pointer;font-weight:600;">Show Raw API Response</summary>
-                    <pre style="background:#222;color:#fff;padding:12px;border-radius:6px;overflow-x:auto;font-size:13px;max-height:300px;">
-<?php echo esc_html(print_r($escrow_result, true)); ?>
-                    </pre>
-                </details>
-            <?php endif; ?>
-        </div>
-        <!-- Modal for Complete Escrow -->
-        <div id="mnt-complete-escrow-modal" style="display:block;position:fixed;z-index:9999;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.45);">
-            <div style="background:#fff;max-width:400px;margin:10vh auto;padding:32px 24px 24px 24px;border-radius:10px;box-shadow:0 2px 16px rgba(0,0,0,0.13);position:relative;">
-                <h3 style="margin-top:0;">Move Funds to Escrow</h3>
-                <p>Escrow created! To complete, click the button below to move funds from the buyer's wallet to escrow.</p>
-                <button id="mnt-complete-escrow-btn" class="mnt-btn" data-project-id="<?php echo esc_attr($escrow_response['project_id'] ?? $project_id ?? ''); ?>" data-user-id="<?php echo esc_attr(isset($escrow_response['client_id']) ? $escrow_response['client_id'] : (isset($client_id) ? $client_id : '')); ?>">Complete</button>
-                <div id="mnt-complete-escrow-message" style="margin-top:16px;"></div>
-                <button onclick="document.getElementById('mnt-complete-escrow-modal').style.display='none'" style="position:absolute;top:10px;right:14px;background:none;border:none;font-size:22px;line-height:1;cursor:pointer;">&times;</button>
+<div class="tb-dhb-box">
+    <div class="tb-dhb-box-wrapper">
+                
+        <div class="row">
+            <div class="col-lg-6 col-md-6 col-sm-12">
+                <!-- Buyer Details -->
+                <div class="tb-form-group">
+                    <h5 class="tb-dhb-subtitle"><?php esc_html_e('Buyer (Client)', 'taskbot'); ?></h5>
+                    <div class="tb-userinfo-box">
+                        <div class="tb-userinfo-content">
+                            <span><strong><?php esc_html_e('ID:', 'taskbot'); ?></strong> <?php echo esc_html($buyer ? $buyer->ID : ''); ?></span>
+                            <span><strong><?php esc_html_e('Name:', 'taskbot'); ?></strong> <?php echo esc_html($buyer ? $buyer->display_name : ''); ?></span>
+                            <span><strong><?php esc_html_e('Email:', 'taskbot'); ?></strong> <?php echo esc_html($buyer ? $buyer->user_email : ''); ?></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-6 col-md-6 col-sm-12">
+
+                <!-- Seller Details -->
+                <div class="tb-form-group">
+                    <h5 class="tb-dhb-subtitle"><?php esc_html_e('Seller (Merchant)', 'taskbot'); ?></h5>
+                    <div class="tb-userinfo-box">
+                        <div class="tb-userinfo-content">
+                            <span><strong><?php esc_html_e('ID:', 'taskbot'); ?></strong> <?php echo esc_html($seller ? $seller->ID : ''); ?></span>
+                            <span><strong><?php esc_html_e('Name:', 'taskbot'); ?></strong> <?php echo esc_html($seller ? $seller->display_name : ''); ?></span>
+                            <span><strong><?php esc_html_e('Email:', 'taskbot'); ?></strong> <?php echo esc_html($seller ? $seller->user_email : ''); ?></span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
-        <!-- Manually include jQuery, mntEscrow object, and mnt-complete-escrow.js -->
-        <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-        <script>
-        var mntEscrow = {
-            ajaxUrl: '<?php echo admin_url('admin-ajax.php'); ?>',
-            nonce: '<?php echo wp_create_nonce('mnt_nonce'); ?>'
-        };
-        </script>
-        <script src="<?php echo plugins_url('assets/js/mnt-complete-escrow.js', dirname(__FILE__)); ?>?v=debug"></script>
-    <?php elseif ($escrow_error): ?>
-        <div class="notice notice-error">
-            <?php echo $escrow_error; ?>
-            <?php if (isset($escrow_result)): ?>
-                <details style="margin-top:12px;">
-                    <summary style="cursor:pointer;font-weight:600;">Show Raw API Response</summary>
-                    <pre style="background:#222;color:#fff;padding:12px;border-radius:6px;overflow-x:auto;font-size:13px;max-height:300px;">
-<?php echo esc_html(print_r($escrow_result, true)); ?>
-                    </pre>
-                </details>
-            <?php endif; ?>
-        </div>
-    <?php endif; ?>
 
-    <form method="post">
-        <?php wp_nonce_field('create_escrow', 'create_escrow_nonce'); ?>
-        <input type="hidden" name="project_id" value="<?php echo esc_attr($project_id); ?>">
-        <input type="hidden" name="merchant_id" value="<?php echo esc_attr($merchant_id); ?>">
-        <input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>">
-        <input type="hidden" name="proposal_id" value="<?php echo esc_attr($proposal_id); ?>">
-        <div class="form-group">
-            <label>Amount (₦)</label>
-            <input type="number" name="amount" min="1" step="0.01" value="<?php echo esc_attr($amount); ?>" required>
+        <div class="row">
+            <div class="col-lg-6 col-md-6 col-sm-12">
+
+                <!-- Project Details -->
+                <div class="tb-form-group">
+                    <h5 class="tb-dhb-subtitle"><?php esc_html_e('Project Details', 'taskbot'); ?></h5>
+                    <div class="tb-userinfo-box">
+                        <div class="tb-userinfo-content">
+                            <?php if ($project): ?>
+                                <span><strong><?php esc_html_e('ID:', 'taskbot'); ?></strong> <?php echo esc_html($project->ID); ?></span>
+                                <span><strong><?php esc_html_e('Title:', 'taskbot'); ?></strong> <?php echo esc_html($project->post_title); ?></span>
+                                <span><strong><?php esc_html_e('Status:', 'taskbot'); ?></strong> <?php echo esc_html($project->post_status); ?></span>
+                            <?php else: ?>
+                                <em><?php esc_html_e('No project found.', 'taskbot'); ?></em>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-6 col-md-6 col-sm-12">
+
+                <!-- Proposal Details -->
+                <div class="tb-form-group">
+                    <h5 class="tb-dhb-subtitle"><?php esc_html_e('Proposal Details', 'taskbot'); ?></h5>
+                    <div class="tb-userinfo-box">
+                        <div class="tb-userinfo-content">
+                            <?php if ($proposal): ?>
+                                <span><strong><?php esc_html_e('ID:', 'taskbot'); ?></strong> <?php echo esc_html($proposal->ID); ?></span>
+                                <span><strong><?php esc_html_e('Title:', 'taskbot'); ?></strong> <?php echo esc_html($proposal->post_title); ?></span>
+                                <span><strong><?php esc_html_e('Status:', 'taskbot'); ?></strong> <?php echo esc_html($proposal->post_status); ?></span>
+                                <?php if ($is_milestone): ?>
+                                    <span><strong><?php esc_html_e('Type:', 'taskbot'); ?></strong> <span class="tk-badge-success" style="background: #28a745; color: white; padding: 4px 12px; border-radius: 4px; font-size: 12px;"><?php esc_html_e('Milestone Project', 'taskbot'); ?></span></span>
+                                <?php endif; ?>
+                            <?php else: ?>
+                                <em><?php esc_html_e('No proposal found.', 'taskbot'); ?></em>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
-        <button type="submit" class="mnt-btn">Create Escrow & Hire Seller</button>
-    </form>
+
+        <?php if ($is_milestone && $milestone): ?>
+        <!-- Milestone Details -->
+        <div class="row">
+            <div class="col-12">
+                <div class="tb-form-group">
+                    <h5 class="tb-dhb-subtitle" style="display: flex; align-items: center; gap: 8px;">
+                        <i class="tb-icon-check-circle" style="color: #28a745; font-size: 20px;"></i> 
+                        <?php esc_html_e('Milestone Payment Details', 'taskbot'); ?>
+                    </h5>
+                    <div class="tb-userinfo-box" style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 4px solid #28a745; padding: 20px;">
+                        <div class="tb-userinfo-content">
+                            <span><strong><?php esc_html_e('Milestone Key:', 'taskbot'); ?></strong> <code style="background: #fff; padding: 2px 8px; border-radius: 4px;"><?php echo esc_html($milestone['key'] ?? ''); ?></code></span>
+                            <span><strong><?php esc_html_e('Title:', 'taskbot'); ?></strong> <?php echo esc_html($milestone['title'] ?? $milestone_title ?? 'Untitled'); ?></span>
+                            <?php if (!empty($milestone['detail'])): ?>
+                                <span><strong><?php esc_html_e('Description:', 'taskbot'); ?></strong> <?php echo esc_html($milestone['detail']); ?></span>
+                            <?php endif; ?>
+                            <span style="background: white; padding: 15px; border-radius: 8px; margin-top: 10px; display: inline-block;">
+                                <strong><?php esc_html_e('Amount:', 'taskbot'); ?></strong> 
+                                <span style="color: #28a745; font-weight: 700; font-size: 24px; margin-left: 8px;">
+                                    ₦<?php echo esc_html(number_format($milestone['price'] ?? $amount, 2)); ?>
+                                </span>
+                            </span>
+                            <?php if (!empty($milestone['status'])): ?>
+                                <span><strong><?php esc_html_e('Status:', 'taskbot'); ?></strong> 
+                                    <span class="tk-badge" style="background: #e0e7ff; color: #4f46e5; padding: 4px 12px; border-radius: 4px;">
+                                        <?php echo esc_html(ucfirst($milestone['status'])); ?>
+                                    </span>
+                                </span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
+                <?php if ($escrow_response || (isset($escrow_result['detail']) && $escrow_result['detail'] === 'Project already exist.')): ?>
+                    <div class="tk-alert tk-alert-success">
+                        <?php if ($escrow_response): ?>
+                            <strong><?php esc_html_e('Escrow Created!', 'taskbot'); ?></strong><br>
+                            <?php if (!empty($escrow_response['escrow_id'])): ?>
+                                <strong><?php esc_html_e('Escrow ID:', 'taskbot'); ?></strong> <?php echo esc_html($escrow_response['escrow_id']); ?><br>
+                            <?php endif; ?>
+                            <strong><?php esc_html_e('Status:', 'taskbot'); ?></strong> <?php echo esc_html($escrow_response['status'] ?? ''); ?><br>
+                            <strong><?php esc_html_e('Amount:', 'taskbot'); ?></strong> ₦<?php echo esc_html($escrow_response['amount'] ?? ''); ?><br>
+                            <?php if (!empty($escrow_response['merchant_id'])): ?>
+                                <strong><?php esc_html_e('Merchant ID:', 'taskbot'); ?></strong> <?php echo esc_html($escrow_response['merchant_id'] ?? ''); ?><br>
+                            <?php endif; ?>
+                            <?php if (!empty($escrow_response['client_id'])): ?>
+                                <strong><?php esc_html_e('Client ID:', 'taskbot'); ?></strong> <?php echo esc_html($escrow_response['client_id'] ?? ''); ?><br>
+                            <?php endif; ?>
+                            <strong><?php esc_html_e('Project ID:', 'taskbot'); ?></strong> <?php echo esc_html($escrow_response['project_id'] ?? ''); ?><br>
+                            <?php if (!empty($escrow_response['message'])): ?>
+                                <br><strong><?php esc_html_e('Message:', 'taskbot'); ?></strong> <?php echo esc_html($escrow_response['message']); ?>
+                            <?php endif; ?>
+                            <details style="margin-top:12px;">
+                                <summary style="cursor:pointer;font-weight:600;"><?php esc_html_e('Show Raw API Response', 'taskbot'); ?></summary>
+                                <pre class="tk-code-block"><?php echo esc_html(print_r($escrow_response, true)); ?></pre>
+                            </details>
+                        <?php else: ?>
+                            <strong><?php esc_html_e('Escrow Already Exists for this Project.', 'taskbot'); ?></strong><br>
+                            <strong><?php esc_html_e('Project ID:', 'taskbot'); ?></strong> <?php echo esc_html($project_id); ?><br>
+                            <strong><?php esc_html_e('Merchant ID:', 'taskbot'); ?></strong> <?php echo esc_html($merchant_id); ?><br>
+                            <strong><?php esc_html_e('Client ID:', 'taskbot'); ?></strong> <?php echo esc_html($client_id); ?><br>
+                            <strong><?php esc_html_e('Amount:', 'taskbot'); ?></strong> ₦<?php echo esc_html($amount); ?><br>
+                            <br><strong><?php esc_html_e('Message:', 'taskbot'); ?></strong> <?php esc_html_e('Project already exists. You can move funds to escrow below.', 'taskbot'); ?>
+                            <details style="margin-top:12px;">
+                                <summary style="cursor:pointer;font-weight:600;"><?php esc_html_e('Show Raw API Response', 'taskbot'); ?></summary>
+                                <pre class="tk-code-block"><?php echo esc_html(print_r($escrow_result, true)); ?></pre>
+                            </details>
+                        <?php endif; ?>
+                    </div>
+
+                    <!-- Modal for Complete Escrow -->
+                    <?php 
+                    // Show modal if status is PENDING or if project already exists
+                    $show_modal = false;
+                    if (!empty($escrow_response['status']) && strtoupper($escrow_response['status']) === 'PENDING') {
+                        $show_modal = true;
+                    } elseif (isset($escrow_result['detail']) && $escrow_result['detail'] === 'Project already exist.') {
+                        $show_modal = true;
+                    }
+                    ?>
+                    <?php if ($show_modal): ?>
+                    <div class="modal fade tk-popup-modal show" id="mnt-complete-escrow-modal" tabindex="-1" aria-hidden="false" style="display:block !important;">
+                        <div class="modal-backdrop fade show" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1040;"></div>
+                        <div class="modal-dialog modal-dialog-centered" style="position:relative;z-index:1050;">
+                            <div class="modal-content">
+                                <div class="tk-popup_title">
+                                    <h5><?php esc_html_e('Release Funds to Escrow', 'taskbot'); ?></h5>
+                                    <a href="javascript:void(0);" class="close" onclick="jQuery('#mnt-complete-escrow-modal').hide(); jQuery('.modal-backdrop').remove();"><i class="tb-icon-x"></i></a>
+                                </div>
+                                <div class="modal-body tk-popup-content">
+                                    <?php if ($escrow_response): ?>
+                                        <p><?php esc_html_e('Escrow transaction created successfully with PENDING status. Click the button below to release funds from your wallet to the escrow account.', 'taskbot'); ?></p>
+                                    <?php else: ?>
+                                        <p><?php esc_html_e('An escrow transaction already exists for this project but funds have not been released yet. Click the button below to release funds from your wallet to the escrow account.', 'taskbot'); ?></p>
+                                    <?php endif; ?>
+                                    <button id="mnt-complete-escrow-btn" class="tk-btn-solid-lg" 
+                                            data-project-id="<?php echo esc_attr($escrow_response['project_id'] ?? $project_id ?? ''); ?>" 
+                                            data-user-id="<?php echo esc_attr(isset($escrow_response['client_id']) ? $escrow_response['client_id'] : (isset($client_id) ? $client_id : '')); ?>">
+                                        <?php esc_html_e('Release Funds', 'taskbot'); ?>
+                                    </button>
+                                    <div id="mnt-complete-escrow-message" class="tk-alert" style="margin-top:16px;display:none;"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <?php endif; ?>
+
+                    <!-- Manually include jQuery, mntEscrow object, and mnt-complete-escrow.js -->
+                    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+                    <script>
+                    var mntEscrow = {
+                        ajaxUrl: '<?php echo admin_url('admin-ajax.php'); ?>',
+                        nonce: '<?php echo wp_create_nonce('mnt_nonce'); ?>'
+                    };
+                    </script>
+                    <script src="<?php echo plugins_url('assets/js/mnt-complete-escrow.js', dirname(__FILE__)); ?>?v=debug"></script>
+
+                <?php elseif ($escrow_error): ?>
+                    <div class="tk-alert tk-alert-error">
+                        <?php echo $escrow_error; ?>
+                        <?php if (isset($escrow_result)): ?>
+                            <details style="margin-top:12px;">
+                                <summary style="cursor:pointer;font-weight:600;"><?php esc_html_e('Show Raw API Response', 'taskbot'); ?></summary>
+                                <pre class="tk-code-block"><?php echo esc_html(print_r($escrow_result, true)); ?></pre>
+                            </details>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
+
+        <div class="row">
+            <div class="col-12">
+                <form method="post" class="tb-themeform">
+                    <?php wp_nonce_field('create_escrow', 'create_escrow_nonce'); ?>
+                    <input type="hidden" name="project_id" value="<?php echo esc_attr($project_id); ?>">
+                    <input type="hidden" name="merchant_id" value="<?php echo esc_attr($merchant_id); ?>">
+                    <input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>">
+                    <input type="hidden" name="proposal_id" value="<?php echo esc_attr($proposal_id); ?>">
+                    <fieldset>
+                        <div class="tb-themeform__wrap">
+                            <div class="form-group">
+                                <label class="tb-label"><?php esc_html_e('Escrow Amount (₦)', 'taskbot'); ?></label>
+                                <input type="number" name="amount" class="form-control" min="1" step="0.01" value="<?php echo esc_attr($amount); ?>" placeholder="<?php esc_attr_e('Enter amount', 'taskbot'); ?>" required>
+                            </div>
+                            <div class="tb-dhbbtn-holder">
+                                <button type="submit" class="tb-btn tb-greenbtn">
+                                    <i class="tb-icon-lock"></i> <?php esc_html_e('Create Escrow & Hire Seller', 'taskbot'); ?>
+                                </button>
+                                <a href="javascript:history.back()" class="tb-btn tb-btn-outline">
+                                    <i class="tb-icon-arrow-left"></i> <?php esc_html_e('Go Back', 'taskbot'); ?>
+                                </a>
+                            </div>
+                        </div>
+                    </fieldset>
+                </form>
+            </div>
+        </div>
+    </div>
 </div>
+
+<style>
+/* Escrow Page Styling */
+.tb-userinfo-box {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    border: 1px solid #e9ecef;
+    margin-bottom: 20px;
+}
+
+.tb-userinfo-content {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.tb-userinfo-content span {
+    display: flex;
+    align-items: center;
+    font-size: 14px;
+    color: #495057;
+}
+
+.tb-userinfo-content strong {
+    min-width: 80px;
+    color: #1e293b;
+    font-weight: 600;
+}
+
+.tb-form-group {
+    margin-bottom: 25px;
+}
+
+.tb-dhb-subtitle {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1e293b;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #e9ecef;
+}
+
+.tb-dhb-mainheading {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 25px;
+    gap: 20px;
+}
+
+.tb-dhb-mainheading h4 {
+    margin: 0 0 8px 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.tb-dhb-mainheading-right {
+    display: flex;
+    gap: 10px;
+}
+
+.tb-btn-cancel {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    background: #fff;
+    color: #6b7280;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-decoration: none;
+}
+
+.tb-btn-cancel:hover {
+    background: #f3f4f6;
+    color: #374151;
+    border-color: #9ca3af;
+}
+
+.tb-btn-outline {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 28px;
+    font-size: 16px;
+    font-weight: 600;
+    background: #fff;
+    color: #6b7280;
+    border: 2px solid #d1d5db;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-decoration: none;
+}
+
+.tb-btn-outline:hover {
+    background: #f3f4f6;
+    color: #374151;
+    border-color: #9ca3af;
+    transform: translateY(-1px);
+}
+
+.tb-themeform {
+    background: #fff;
+    padding: 25px;
+    border-radius: 8px;
+    border: 1px solid #e9ecef;
+}
+
+.tb-themeform__wrap {
+    padding: 0;
+}
+
+.tb-themeform .form-group {
+    margin-bottom: 20px;
+}
+
+.tb-label {
+    display: block;
+    font-size: 15px;
+    font-weight: 600;
+    color: #374151;
+    margin-bottom: 10px;
+}
+
+.tb-themeform input[type="number"] {
+    width: 100%;
+    padding: 12px 16px;
+    font-size: 15px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    transition: all 0.3s ease;
+}
+
+.tb-themeform input[type="number"]:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.tb-dhbbtn-holder {
+    padding-top: 15px;
+    border-top: 1px solid #e9ecef;
+    margin-top: 20px;
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.tb-greenbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 32px;
+    font-size: 16px;
+    font-weight: 600;
+    background: #10b981;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.tb-greenbtn:hover {
+    background: #059669;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.tb-greenbtn i {
+    font-size: 18px;
+}
+
+.tk-alert {
+    padding: 16px 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border-left: 4px solid;
+}
+
+.tk-alert-success {
+    background: #d1fae5;
+    color: #065f46;
+    border-color: #10b981;
+}
+
+.tk-alert-error {
+    background: #fee2e2;
+    color: #991b1b;
+    border-color: #ef4444;
+}
+
+.tk-code-block {
+    background: #2d3748;
+    color: #f7fafc;
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 13px;
+    max-height: 300px;
+    margin-top: 10px;
+    font-family: 'Courier New', monospace;
+}
+
+.tk-popup-modal .modal-content {
+    border-radius: 12px;
+    border: none;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+}
+
+.tk-popup_title {
+    padding: 20px 25px;
+    border-bottom: 1px solid #e9ecef;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.tk-popup_title h5 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.tk-popup-content {
+    padding: 25px;
+}
+
+.tk-popup-content p {
+    margin-bottom: 20px;
+    color: #6b7280;
+    line-height: 1.6;
+}
+
+.tk-btn-solid-lg {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 14px 32px;
+    font-size: 16px;
+    font-weight: 600;
+    background: #667eea;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    width: 100%;
+}
+
+.tk-btn-solid-lg:hover {
+    background: #5568d3;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .tb-userinfo-content span {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 5px;
+    }
+    
+    .tb-userinfo-content strong {
+        min-width: auto;
+    }
+    
+    .tb-themeform {
+        padding: 20px 15px;
+    }
+}
+</style>

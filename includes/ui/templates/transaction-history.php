@@ -27,13 +27,33 @@ $transactions_result = \MNT\Api\Transaction::list_by_user(
 );
 
 // API returns array directly, not wrapped in 'transactions' key
-$wallet_transactions = is_array($transactions_result) ? $transactions_result : [];
+// Handle case where API returns error string or non-array response
+$wallet_transactions = [];
+if (is_array($transactions_result)) {
+    // Check if it's a list of transactions or a wrapped response
+    if (isset($transactions_result['transactions'])) {
+        $wallet_transactions = $transactions_result['transactions'];
+    } elseif (isset($transactions_result[0]) && is_array($transactions_result[0])) {
+        // Direct array of transactions
+        $wallet_transactions = $transactions_result;
+    } elseif (isset($transactions_result['message'])) {
+        // API returned an error message in array format
+        $wallet_transactions = [];
+    } else {
+        // Unknown format, treat as empty
+        $wallet_transactions = [];
+    }
+}
 
 // Add source marker to wallet transactions
-foreach ($wallet_transactions as &$tx) {
-    $tx['source'] = 'Wallet';
+if (!empty($wallet_transactions)) {
+    foreach ($wallet_transactions as &$tx) {
+        if (is_array($tx)) {
+            $tx['source'] = 'Wallet';
+        }
+    }
+    unset($tx);
 }
-unset($tx);
 
 // Fetch escrow transactions from API
 $escrow_transactions = [];
