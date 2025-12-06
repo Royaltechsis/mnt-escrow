@@ -90,6 +90,9 @@ class Dashboard {
      * Escrow Management Page
      */
     public static function escrow_management_page() {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have sufficient permissions to access this page.'));
+        }
         ?>
         <div class="wrap mnt-admin-wrap">
             <h1>Escrow Management</h1>
@@ -176,6 +179,9 @@ class Dashboard {
      * Dashboard page
      */
     public static function dashboard_page() {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have sufficient permissions to access this page.'));
+        }
         ?>
         <div class="wrap mnt-admin-wrap">
             <h1>MyNaijaTask Escrow Dashboard</h1>
@@ -226,6 +232,10 @@ class Dashboard {
      * Settings page
      */
     public static function settings_page() {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have sufficient permissions to access this page.'));
+        }
+        
         if (isset($_POST['mnt_save_settings'])) {
             check_admin_referer('mnt_settings_nonce');
             
@@ -297,6 +307,10 @@ class Dashboard {
      * Transactions page
      */
     public static function transactions_page() {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have sufficient permissions to access this page.'));
+        }
+        
         $page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
         $per_page = 10;
         $offset = ($page - 1) * $per_page;
@@ -556,6 +570,10 @@ class Dashboard {
      * Disputes page
      */
     public static function disputes_page() {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have sufficient permissions to access this page.'));
+        }
+        
         global $wpdb;
         
         // Get all tasks with disputed escrows
@@ -769,6 +787,10 @@ class Dashboard {
      * Wallets page - Search user wallets
      */
     public static function wallets_page() {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have sufficient permissions to access this page.'));
+        }
+        
         // Get all WordPress users
         $users = get_users(['number' => -1]); // -1 means all users
         

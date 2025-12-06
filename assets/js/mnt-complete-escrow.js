@@ -48,8 +48,9 @@ $(document).on('click', '#mnt-complete-escrow-btn', function(e) {
     console.log('=== Expected API Call ===');
     console.log('Endpoint: POST https://escrow-api-dfl6.onrender.com/api/escrow/client_release_funds');
     console.log('Purpose: Move funds from client wallet to escrow account (PENDING → FUNDED)');
+    console.log('Note: For tasks, task_id is passed as project_id');
     console.log('API Payload: {');
-    console.log('  "project_id": "' + projectId + '",');
+    console.log('  "project_id": "' + projectId + '",  // task_id for task escrow');
     console.log('  "client_id": "' + userId + '",');
     console.log('  "merchant_id": "' + sellerId + '"');
     console.log('}');

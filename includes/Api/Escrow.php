@@ -38,10 +38,15 @@ class Escrow {
         error_log('=== MNT API - client_release_funds ===');
         error_log('Endpoint: POST /escrow/client_release_funds');
         error_log('Purpose: Move funds from wallet to escrow (pending → funded)');
-        error_log('Payload being sent: ' . json_encode($data));
-        error_log('project_id: ' . $project_id . ' (type: ' . gettype($project_id) . ')');
-        error_log('client_id: ' . $client_id . ' (type: ' . gettype($client_id) . ')');
-        error_log('merchant_id: ' . $merchant_id . ' (type: ' . gettype($merchant_id) . ')');
+        error_log('Note: For tasks, task_id is passed as project_id');
+        error_log('');
+        error_log('=== API Payload ===');
+        error_log(json_encode($data, JSON_PRETTY_PRINT));
+        error_log('');
+        error_log('Parameters breakdown:');
+        error_log('  project_id: ' . $project_id . ' (type: ' . gettype($project_id) . ')');
+        error_log('  client_id: ' . $client_id . ' (type: ' . gettype($client_id) . ')');
+        error_log('  merchant_id: ' . $merchant_id . ' (type: ' . gettype($merchant_id) . ')');
         
         $result = Client::post('/escrow/client_release_funds', $data);
         
@@ -81,10 +86,20 @@ class Escrow {
             'amount'      => floatval($amount)
         ];
         
-        error_log('MNT API - Escrow::create() called');
-        error_log('MNT API - Endpoint: /escrow/create_transaction');
-        error_log('MNT API - Payload: ' . json_encode($data));
-        error_log('MNT API - Auto Release: ' . ($auto_release ? 'YES' : 'NO'));
+        error_log('=== MNT API - CREATE REGULAR ESCROW ===');
+        error_log('Method: Escrow::create()');
+        error_log('Endpoint: POST /escrow/create_transaction');
+        error_log('Purpose: Create new escrow transaction (PENDING status)');
+        error_log('');
+        error_log('=== API Payload ===');
+        error_log(json_encode($data, JSON_PRETTY_PRINT));
+        error_log('');
+        error_log('Parameters breakdown:');
+        error_log('  merchant_id: ' . $merchant_id . ' (type: ' . gettype($merchant_id) . ')');
+        error_log('  client_id: ' . $client_id . ' (type: ' . gettype($client_id) . ')');
+        error_log('  project_id: ' . $project_id . ' (type: ' . gettype($project_id) . ')');
+        error_log('  amount: ' . $amount . ' (type: ' . gettype($amount) . ')');
+        error_log('  auto_release: ' . ($auto_release ? 'YES' : 'NO'));
         
         $result = Client::post('/escrow/create_transaction', $data);
         

@@ -63,6 +63,12 @@ if ($task_id) {
             if (strtoupper($existing_escrow_status) === 'PENDING') {
                 $escrow_response = $current_escrow;
                 $escrow_response['message'] = 'Existing pending escrow found for this task';
+                
+                // Ensure merchant_id is set for the modal button
+                if (empty($escrow_response['merchant_id'])) {
+                    $escrow_response['merchant_id'] = $seller_id ?: $merchant_id;
+                    error_log('MNT: Added merchant_id to escrow_response: ' . $escrow_response['merchant_id']);
+                }
             } elseif (strtoupper($existing_escrow_status) === 'FUNDED') {
                 // Escrow is funded - trigger task hiring if not already hired
                 $task_status = get_post_meta($task_id, '_post_project_status', true);
@@ -200,9 +206,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
             // Use task_id as project_id for API
             $escrow_project_id = (string)$task_id;
             
+            error_log('MNT: Creating regular escrow for TASK - merchant_id: ' . $merchant_id . ', client_id: ' . $client_id . ', project_id (task_id): ' . $escrow_project_id . ', amount: ' . $amount);
+            
             // Regular escrow transaction for tasks - create only (PENDING status)
-            // Pass false as 5th parameter to skip auto-funding
-            $escrow_result = \MNT\Api\Escrow::create((string)$merchant_id, (string)$client_id, $amount, $escrow_project_id, false);
+            // API signature: create($merchant_id, $client_id, $project_id, $amount, $auto_release)
+            $escrow_result = \MNT\Api\Escrow::create((string)$merchant_id, (string)$client_id, $escrow_project_id, $amount, false);
             
             // Check if escrow was created successfully
             $escrow_success = !empty($escrow_result['status']) || !empty($escrow_result['project_id']) || (isset($escrow_result['message']) && stripos($escrow_result['message'], 'success') !== false);
@@ -222,6 +230,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                 update_post_meta($task_id, 'mnt_escrow_package_key', $package_key);
                 
                 $escrow_response = $escrow_result;
+                
+                // Ensure merchant_id and client_id are in the response for the modal button
+                if (empty($escrow_response['merchant_id'])) {
+                    $escrow_response['merchant_id'] = $merchant_id;
+                }
+                if (empty($escrow_response['client_id'])) {
+                    $escrow_response['client_id'] = $client_id;
+                }
+                if (empty($escrow_response['project_id'])) {
+                    $escrow_response['project_id'] = $task_id;
+                }
+                
+                error_log('MNT: Task escrow created - Response with IDs: ' . json_encode([
+                    'project_id' => $escrow_response['project_id'],
+                    'client_id' => $escrow_response['client_id'],
+                    'merchant_id' => $escrow_response['merchant_id']
+                ]));
             } else {
                 // Show full error message and reason if available
                 $msg = '';
@@ -418,6 +443,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                     } elseif (isset($escrow_result['detail']) && $escrow_result['detail'] === 'Project already exist.') {
                         $show_modal = true;
                     }
+                    
+                    // Debug log the button attributes
+                    error_log('=== MNT: Modal Button Data Attributes ===');
+                    error_log('project_id: ' . ($escrow_response['project_id'] ?? $task_id ?? 'EMPTY'));
+                    error_log('client_id: ' . (isset($escrow_response['client_id']) ? $escrow_response['client_id'] : (isset($client_id) ? $client_id : 'EMPTY')));
+                    error_log('merchant_id: ' . (isset($escrow_response['merchant_id']) ? $escrow_response['merchant_id'] : (isset($merchant_id) ? $merchant_id : 'EMPTY')));
                     ?>
                     <?php if ($show_modal): ?>
                     <div class="modal fade tk-popup-modal show" id="mnt-complete-escrow-modal" tabindex="-1" aria-hidden="false" style="display:block !important;">
@@ -436,7 +467,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                                     <?php endif; ?>
                                     <button id="mnt-complete-escrow-btn" class="tk-btn-solid-lg" 
                                             data-project-id="<?php echo esc_attr($escrow_response['project_id'] ?? $task_id ?? ''); ?>" 
-                                            data-user-id="<?php echo esc_attr(isset($escrow_response['client_id']) ? $escrow_response['client_id'] : (isset($client_id) ? $client_id : '')); ?>">
+                                            data-user-id="<?php echo esc_attr(isset($escrow_response['client_id']) ? $escrow_response['client_id'] : (isset($client_id) ? $client_id : '')); ?>"
+                                            data-seller-id="<?php echo esc_attr(isset($escrow_response['merchant_id']) ? $escrow_response['merchant_id'] : (isset($merchant_id) ? $merchant_id : '')); ?>">
                                         <?php esc_html_e('Release Funds', 'taskbot'); ?>
                                     </button>
                                     <div id="mnt-complete-escrow-message" class="tk-alert" style="margin-top:16px;display:none;"></div>
@@ -470,7 +502,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
 
         <div class="row">
             <div class="col-12">
-                <form method="post" class="tb-themeform">
+                <form method="post" class="tb-themeform" id="mnt-create-task-escrow-form">
                     <?php wp_nonce_field('create_escrow_task', 'create_escrow_nonce'); ?>
                     <input type="hidden" name="task_id" value="<?php echo esc_attr($task_id); ?>">
                     <input type="hidden" name="merchant_id" value="<?php echo esc_attr($merchant_id); ?>">
@@ -493,6 +525,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                 </form>
             </div>
         </div>
+
+        <!-- Log create task escrow form data before submission -->
+        <script>
+        jQuery(function($) {
+            $('#mnt-create-task-escrow-form').on('submit', function(e) {
+                var formData = $(this).serializeArray();
+                var formObj = {};
+                $.each(formData, function(i, field) {
+                    formObj[field.name] = field.value;
+                });
+                
+                console.log('=== CREATE TASK ESCROW - Form Submission ===');
+                console.log('Form Data:', formObj);
+                console.log('');
+                console.log('=== Backend Will Process This As ===');
+                console.log('task_id:', formObj.task_id, '(will be mapped to project_id)');
+                console.log('client_id:', formObj.client_id);
+                console.log('merchant_id:', formObj.merchant_id);
+                console.log('amount:', formObj.amount);
+                console.log('package_key:', formObj.package_key || '(none)');
+                console.log('');
+                console.log('=== Expected API Call ===');
+                console.log('Endpoint: POST https://escrow-api-dfl6.onrender.com/api/escrow/create_transaction');
+                console.log('API Payload: {');
+                console.log('  "merchant_id": "' + formObj.merchant_id + '",');
+                console.log('  "client_id": "' + formObj.client_id + '",');
+                console.log('  "project_id": "' + formObj.task_id + '",  // task_id is used as project_id');
+                console.log('  "amount": ' + formObj.amount);
+                console.log('}');
+                console.log('');
+                console.log('Form will now submit to PHP backend for processing...');
+            });
+        });
+        </script>
+
     </div>
 </div>
 

@@ -41,10 +41,15 @@ class MNT_Escrow {
         
         // Set default options
         if (!get_option('mnt_api_base_url')) {
-            update_option('mnt_api_base_url', 'https://escrow-api-1vu6.onrender.com');
+            update_option('mnt_api_base_url', 'https://escrow-api-dfl6.onrender.com');
         }
         if (!get_option('mnt_auto_create_wallet')) {
             update_option('mnt_auto_create_wallet', '1');
+        }
+        
+        // Create escrow deposit page
+        if (class_exists('MNT\Setup\EscrowPage')) {
+            \MNT\Setup\EscrowPage::create_deposit_page();
         }
         
         // Flush rewrite rules
@@ -113,6 +118,14 @@ class MNT_Escrow {
      * Boot the plugin
      */
     public function boot() {
+        // Check if classes exist before initializing
+        if (!class_exists('MNT\Routes\Router') || 
+            !class_exists('MNT\UI\Init') || 
+            !class_exists('MNT\Taskbot\HookOverride')) {
+            // Classes not loaded yet, will be available on next request
+            return;
+        }
+        
         // Initialize core components
         MNT\Routes\Router::register();
         MNT\UI\Init::register_hooks();
@@ -120,7 +133,9 @@ class MNT_Escrow {
         
         // Initialize admin dashboard
         if (is_admin()) {
-            MNT\Admin\Dashboard::init();
+            if (class_exists('MNT\Admin\Dashboard')) {
+                MNT\Admin\Dashboard::init();
+            }
         }
     }
 

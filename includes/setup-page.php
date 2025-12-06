@@ -80,14 +80,12 @@ class EscrowPage {
     }
 }
 
-// Create page on plugin activation
-register_activation_hook(MNT_ESCROW_FILE, function() {
-    \MNT\Setup\EscrowPage::create_deposit_page();
-});
+// Don't register activation hook here - it should be in main plugin file
+// This causes issues during plugin activation
 
-// Also check and create on admin init if missing
+// Check and create page on admin init if missing
 add_action('admin_init', function() {
     if (!get_option('mnt_escrow_deposit_page_id')) {
         \MNT\Setup\EscrowPage::create_deposit_page();
     }
-});
+}, 20); // Priority 20 to run after other init hooks

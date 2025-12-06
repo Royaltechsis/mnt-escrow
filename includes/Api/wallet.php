@@ -1,7 +1,7 @@
 <?php
 namespace MNT\Api;
 
-class wallet {
+class Wallet {
 
     /**
      * Create a new wallet for a user
