@@ -25,11 +25,219 @@ class Init {
         add_action('wp_ajax_mnt_transfer', [__CLASS__, 'handle_transfer_ajax']);
         add_action('wp_ajax_mnt_complete_escrow_funds', [__CLASS__, 'handle_complete_escrow_funds_ajax']);
         add_action('wp_ajax_nopriv_mnt_complete_escrow_funds', [__CLASS__, 'handle_complete_escrow_funds_ajax']);
+        add_action('wp_ajax_mnt_fund_escrow', [__CLASS__, 'handle_fund_escrow_ajax']);
+        add_action('wp_ajax_nopriv_mnt_fund_escrow', [__CLASS__, 'handle_fund_escrow_ajax']);
         add_action('wp_ajax_mnt_merchant_confirm_funds', [__CLASS__, 'handle_merchant_confirm_funds_ajax']);
         add_action('wp_ajax_nopriv_mnt_merchant_confirm_funds', [__CLASS__, 'handle_merchant_confirm_funds_ajax']);
         add_action('wp_ajax_mnt_merchant_release_funds_action', [__CLASS__, 'handle_merchant_release_funds_ajax']);
         add_action('wp_ajax_nopriv_mnt_merchant_release_funds_action', [__CLASS__, 'handle_merchant_release_funds_ajax']);
+        
+        // Milestone approval handler
+        add_action('wp_ajax_mnt_approve_milestone', [__CLASS__, 'handle_approve_milestone_ajax']);
+        add_action('wp_ajax_nopriv_mnt_approve_milestone', [__CLASS__, 'handle_approve_milestone_ajax']);
+        
+        // Helper to get project ID from proposal
+        add_action('wp_ajax_mnt_get_project_from_proposal', [__CLASS__, 'handle_get_project_from_proposal_ajax']);
+        add_action('wp_ajax_nopriv_mnt_get_project_from_proposal', [__CLASS__, 'handle_get_project_from_proposal_ajax']);
+        
+        // Helper to get seller ID from proposal
+        add_action('wp_ajax_mnt_get_seller_from_proposal', [__CLASS__, 'handle_get_seller_from_proposal_ajax']);
+        add_action('wp_ajax_nopriv_mnt_get_seller_from_proposal', [__CLASS__, 'handle_get_seller_from_proposal_ajax']);
 
+    }
+
+    /**
+     * AJAX Handler: Get Project ID from Proposal ID
+     */
+    public static function handle_get_project_from_proposal_ajax() {
+        check_ajax_referer('mnt_nonce', 'nonce');
+        
+        $proposal_id = isset($_POST['proposal_id']) ? intval($_POST['proposal_id']) : 0;
+        
+        if (!$proposal_id) {
+            wp_send_json_error(['message' => 'Missing proposal ID.']);
+            return;
+        }
+        
+        // Get project ID from proposal meta
+        $project_id = get_post_meta($proposal_id, 'project_id', true);
+        
+        if (!$project_id) {
+            // Try alternative meta key
+            $project_id = get_post_meta($proposal_id, '_project_id', true);
+        }
+        
+        if (!$project_id) {
+            // Try getting from proposal post parent
+            $proposal = get_post($proposal_id);
+            if ($proposal && $proposal->post_parent) {
+                $project_id = $proposal->post_parent;
+            }
+        }
+        
+        if ($project_id) {
+            wp_send_json_success(['project_id' => $project_id]);
+        } else {
+            wp_send_json_error(['message' => 'Project ID not found for this proposal.']);
+        }
+    }
+
+    /**
+     * AJAX Handler: Get Seller ID from Proposal ID
+     */
+    public static function handle_get_seller_from_proposal_ajax() {
+        check_ajax_referer('mnt_nonce', 'nonce');
+        
+        $proposal_id = isset($_POST['proposal_id']) ? intval($_POST['proposal_id']) : 0;
+        
+        if (!$proposal_id) {
+            wp_send_json_error(['message' => 'Missing proposal ID.']);
+            return;
+        }
+        
+        // Get seller ID from proposal author
+        $proposal = get_post($proposal_id);
+        
+        if ($proposal && $proposal->post_author) {
+            $seller_id = $proposal->post_author;
+            wp_send_json_success(['seller_id' => $seller_id]);
+        } else {
+            wp_send_json_error(['message' => 'Seller ID not found for this proposal.']);
+        }
+    }
+
+    /**
+     * AJAX Handler: Approve Milestone and Release Funds to Seller Wallet
+     * Called when buyer clicks "Approve" button on milestone
+     */
+    public static function handle_approve_milestone_ajax() {
+        check_ajax_referer('mnt_nonce', 'nonce');
+        
+        $proposal_id = isset($_POST['proposal_id']) ? intval($_POST['proposal_id']) : 0;
+        $project_id = isset($_POST['project_id']) ? intval($_POST['project_id']) : 0;
+        $milestone_key = isset($_POST['milestone_key']) ? sanitize_text_field($_POST['milestone_key']) : '';
+        $user_id = get_current_user_id();
+        
+        error_log('MNT Approve Milestone - Received: proposal_id=' . $proposal_id . ', project_id=' . $project_id . ', milestone_key=' . $milestone_key . ', user_id=' . $user_id);
+        
+        if (!$proposal_id || !$project_id || !$milestone_key) {
+            wp_send_json_error(['message' => 'Missing required parameters.']);
+            return;
+        }
+        
+        // First check if milestone escrow exists
+        $milestone_escrows = get_post_meta($project_id, 'mnt_milestone_escrows', true);
+        error_log('MNT Approve Milestone - Stored milestone escrows: ' . json_encode($milestone_escrows));
+        
+        if (empty($milestone_escrows[$milestone_key])) {
+            error_log('MNT Approve Milestone - ERROR: Milestone not found in local storage!');
+            wp_send_json_error([
+                'message' => 'Error: This milestone has not been paid for yet. Please pay for the milestone first using the "Escrow" button.',
+                'debug' => [
+                    'milestone_key' => $milestone_key,
+                    'stored_milestones' => array_keys($milestone_escrows ?: [])
+                ]
+            ]);
+            return;
+        }
+        
+        // Get seller ID for API call
+        $seller_id = get_post_meta($project_id, 'mnt_escrow_seller', true);
+        if (!$seller_id) {
+            error_log('MNT Approve Milestone - ERROR: Cannot find seller_id for project ' . $project_id);
+            wp_send_json_error([
+                'message' => 'Error: Cannot approve milestone - seller information not found.'
+            ]);
+            return;
+        }
+        
+        error_log('');
+        error_log('=== MNT APPROVE MILESTONE - API CALL ===');
+        error_log('Endpoint: POST https://escrow-api-dfl6.onrender.com/api/escrow/client_confirm_milestone');
+        error_log('Payload to be sent:');
+        error_log('  project_id: ' . $project_id . ' (type: ' . gettype($project_id) . ')');
+        error_log('  client_id: ' . $user_id . ' (type: ' . gettype($user_id) . ')');
+        error_log('  merchant_id: ' . $seller_id . ' (type: ' . gettype($seller_id) . ')');
+        error_log('  milestone_key: ' . $milestone_key . ' (type: ' . gettype($milestone_key) . ')');
+        error_log('  confirm_status: true (boolean)');
+        error_log('Making API call...');
+        
+        // Call the client_confirm_milestone API to release funds to seller wallet
+        // IMPORTANT: Do NOT update local milestone status until we get success from API
+        $result = \MNT\Api\Escrow::client_confirm_milestone($project_id, $user_id, $seller_id, $milestone_key, true);
+        
+        error_log('');
+        error_log('=== MNT APPROVE MILESTONE - API RESPONSE ===');
+        error_log('Response: ' . json_encode($result));
+        error_log('is_null: ' . (is_null($result) ? 'YES' : 'NO'));
+        error_log('is_array: ' . (is_array($result) ? 'YES' : 'NO'));
+        error_log('has error: ' . (isset($result['error']) ? 'YES - ' . $result['error'] : 'NO'));
+        error_log('has detail: ' . (isset($result['detail']) ? 'YES - ' . $result['detail'] : 'NO'));
+        error_log('=========================================');
+        error_log('');
+        
+        // Check for successful response
+        // Only consider success if API explicitly succeeds (no error/detail fields)
+        $is_success = is_array($result) && !isset($result['error']) && !isset($result['detail']);
+        
+        if ($is_success) {
+            error_log('SUCCESS: API approved milestone. Updating local milestone status...');
+            // Update milestone status in proposal meta
+            $proposal_meta = get_post_meta($proposal_id, 'proposal_meta', true);
+            if (!empty($proposal_meta['milestone'][$milestone_key])) {
+                $proposal_meta['milestone'][$milestone_key]['status'] = 'completed';
+                $proposal_meta['milestone'][$milestone_key]['completed_at'] = current_time('mysql');
+                update_post_meta($proposal_id, 'proposal_meta', $proposal_meta);
+            }
+            
+            // Update milestone escrow status
+            $milestone_escrows = get_post_meta($project_id, 'mnt_milestone_escrows', true);
+            if (!empty($milestone_escrows[$milestone_key])) {
+                $milestone_escrows[$milestone_key]['status'] = 'released';
+                $milestone_escrows[$milestone_key]['released_at'] = current_time('mysql');
+                update_post_meta($project_id, 'mnt_milestone_escrows', $milestone_escrows);
+            }
+            
+            error_log('Local milestone status updated successfully.');
+            
+            wp_send_json_success([
+                'message' => $result['message'] ?? 'Milestone approved! Funds released to seller wallet.',
+                'result' => $result
+            ]);
+        } else {
+            // API call failed - DO NOT update milestone status locally
+            $error_msg = isset($result['detail']) ? $result['detail'] : (isset($result['error']) ? $result['error'] : (isset($result['message']) ? $result['message'] : 'Failed to approve milestone.'));
+            
+            error_log('FAILED: API did not approve milestone. NOT updating local status.');
+            error_log('Error message: ' . $error_msg);
+            error_log('MNT Approve Milestone - Full API Response: ' . print_r($result, true));
+            
+            // Build detailed error message
+            $detailed_error = '<strong>Failed to approve milestone:</strong><br><br>';
+            
+            // Provide helpful message if milestone not found
+            if (stripos($error_msg, 'not found') !== false || stripos($error_msg, 'None') !== false) {
+                $detailed_error .= '• <strong>Milestone not found in API:</strong> The milestone exists locally but the API cannot find it.<br>';
+                $detailed_error .= '• This usually means the milestone escrow was not successfully created in the API.<br>';
+                $detailed_error .= '• <strong>Solution:</strong> Try paying for the milestone again using the "Escrow" button.<br><br>';
+            }
+            
+            // Add the original error message
+            $detailed_error .= '<strong>API Error:</strong> ' . esc_html($error_msg) . '<br><br>';
+            
+            // Add full API response for debugging
+            if (!empty($result)) {
+                $detailed_error .= '<strong>Full API Response:</strong><br>';
+                $detailed_error .= '<pre style="background: #1f2937; color: #f3f4f6; padding: 10px; border-radius: 4px; overflow: auto; max-height: 300px; font-size: 11px;">';
+                $detailed_error .= esc_html(print_r($result, true));
+                $detailed_error .= '</pre>';
+            }
+            
+            wp_send_json_error([
+                'message' => $detailed_error,
+                'result' => $result
+            ]);
+        }
     }
 
     /**
@@ -109,7 +317,8 @@ class Init {
         
         if (!empty($result) && !isset($result['error'])) {
             // Check if both parties have now confirmed
-            $escrow_details = \MNT\Api\Escrow::get_escrow_by_id($project_id);
+            $seller_id = get_post_meta($project_id, 'mnt_escrow_seller', true);
+            $escrow_details = \MNT\Api\Escrow::get_escrow_by_id($project_id, $seller_id);
             error_log('MNT Merchant Confirm - Escrow Details: ' . print_r($escrow_details, true));
             
             $both_confirmed = false;
@@ -164,31 +373,438 @@ class Init {
     }
 
     /**
-     * AJAX Handler: Complete Escrow Funds (move funds to escrow)
+     * AJAX Handler: Fund Escrow - Move funds from client wallet to escrow account
+     * This is for the task escrow page when user clicks "Release Funds to Escrow"
+     * Flow: Client Wallet → Escrow Account (pending → funded)
+     */
+    public static function handle_fund_escrow_ajax() {
+        check_ajax_referer('mnt_nonce', 'nonce');
+        
+        $project_id = isset($_POST['project_id']) ? sanitize_text_field($_POST['project_id']) : '';
+        $user_id = isset($_POST['user_id']) ? intval($_POST['user_id']) : 0;
+        $seller_id_from_ajax = isset($_POST['seller_id']) ? intval($_POST['seller_id']) : 0;
+        
+        error_log('MNT Fund Escrow - Received: project_id=' . $project_id . ', user_id=' . $user_id . ', seller_id=' . $seller_id_from_ajax);
+        
+        if (empty($project_id) || empty($user_id)) {
+            error_log('MNT Fund Escrow - ERROR: Missing project_id or user_id');
+            wp_send_json_error(['message' => 'Project ID and User ID are required.']);
+            return;
+        }
+        
+        // Prioritize seller_id from AJAX, then try post meta, then fallback methods
+        $seller_id = $seller_id_from_ajax;
+        
+        if (empty($seller_id)) {
+            // Get seller ID from post meta
+            $seller_id = get_post_meta($project_id, 'mnt_escrow_seller', true);
+        }
+        
+        error_log('=== MNT Fund Escrow - Initial Data ===');
+        error_log('project_id: ' . $project_id);
+        error_log('user_id (client_id): ' . $user_id);
+        error_log('seller_id from AJAX: ' . ($seller_id_from_ajax ? $seller_id_from_ajax : 'EMPTY'));
+        error_log('seller_id from post meta: ' . (get_post_meta($project_id, 'mnt_escrow_seller', true) ?: 'EMPTY'));
+        error_log('seller_id being used: ' . ($seller_id ? $seller_id : 'EMPTY'));
+        error_log('seller_id type: ' . gettype($seller_id));
+        
+        // If seller_id is not found, try to get it from proposal
+        if (empty($seller_id)) {
+            error_log('MNT Fund Escrow - seller_id not in post meta, checking proposal...');
+            
+            // Try to get from proposal_id meta
+            $proposal_id = get_post_meta($project_id, 'proposal_id', true);
+            if ($proposal_id) {
+                error_log('MNT Fund Escrow - Found proposal_id: ' . $proposal_id);
+                
+                // Get seller from proposal author
+                $proposal = get_post($proposal_id);
+                if ($proposal) {
+                    $seller_id = $proposal->post_author;
+                    error_log('MNT Fund Escrow - Got seller_id from proposal author: ' . $seller_id);
+                    
+                    // Save it for future use
+                    update_post_meta($project_id, 'mnt_escrow_seller', $seller_id);
+                }
+            }
+            
+            // Still empty? Try getting from project meta '_seller_id'
+            if (empty($seller_id)) {
+                $seller_id = get_post_meta($project_id, '_seller_id', true);
+                if ($seller_id) {
+                    error_log('MNT Fund Escrow - Got seller_id from _seller_id meta: ' . $seller_id);
+                    update_post_meta($project_id, 'mnt_escrow_seller', $seller_id);
+                }
+            }
+        }
+        
+        // Final check - if still no seller_id, return error
+        if (empty($seller_id)) {
+            error_log('MNT Fund Escrow - ERROR: Cannot find seller_id for project ' . $project_id);
+            wp_send_json_error([
+                'message' => '<strong>Missing Seller ID</strong><br><br>Cannot fund escrow - seller information not found for this project.<br><br><strong>Project ID:</strong> ' . $project_id
+            ]);
+            return;
+        }
+        
+        error_log('MNT Fund Escrow - Final seller_id: ' . $seller_id);
+        
+        // First check if escrow transaction exists
+        $escrow_check = \MNT\Api\Escrow::get_escrow_by_id($project_id, $seller_id);
+        error_log('MNT Fund Escrow - Escrow Check: ' . json_encode($escrow_check));
+        
+        // Check if API returned an error or empty result
+        if (!$escrow_check) {
+            $error_msg = '<strong>No Escrow Transaction Found</strong><br><br>';
+            $error_msg .= 'API returned empty response.<br><br>';
+            $error_msg .= '<strong>Project ID:</strong> ' . $project_id . '<br>';
+            $error_msg .= '<strong>User ID:</strong> ' . $user_id . '<br>';
+            
+            error_log('MNT Fund Escrow - ERROR: Empty response from API for project ' . $project_id);
+            
+            wp_send_json_error(['message' => $error_msg]);
+            return;
+        }
+        
+        // Check if it's an error response (has 'detail' field indicating error)
+        if (isset($escrow_check['detail']) && empty($escrow_check['project_id'])) {
+            $error_msg = '<strong>No Escrow Transaction Found</strong><br><br>';
+            $error_msg .= '<strong>API Response:</strong> ' . esc_html($escrow_check['detail']) . '<br><br>';
+            $error_msg .= '<strong>Project ID:</strong> ' . $project_id . '<br>';
+            $error_msg .= '<strong>User ID:</strong> ' . $user_id . '<br>';
+            
+            error_log('MNT Fund Escrow - ERROR: API error - ' . $escrow_check['detail']);
+            
+            wp_send_json_error(['message' => $error_msg]);
+            return;
+        }
+        
+        // If API returns array of escrows, get the first one
+        $escrow_data = $escrow_check;
+        if (isset($escrow_check[0]) && is_array($escrow_check[0])) {
+            $escrow_data = $escrow_check[0];
+            error_log('MNT Fund Escrow - Using first escrow from array');
+        }
+        
+        // Check if escrow is already funded
+        $escrow_status = isset($escrow_data['status']) ? strtoupper($escrow_data['status']) : '';
+        error_log('MNT Fund Escrow - Escrow Status: ' . $escrow_status);
+        
+        if ($escrow_status === 'FUNDED') {
+            $msg = '<strong>Escrow Already Funded</strong><br><br>';
+            $msg .= 'This escrow has already been funded.<br><br>';
+            $msg .= '<strong>Status:</strong> FUNDED<br>';
+            $msg .= '<strong>Amount:</strong> ₦' . number_format($escrow_data['amount'] ?? 0, 2) . '<br>';
+            $msg .= '<strong>Created:</strong> ' . ($escrow_data['created_at'] ?? 'N/A') . '<br><br>';
+            $msg .= 'The funds are already in the escrow account. No further action needed.';
+            
+            wp_send_json_success([
+                'message' => $msg,
+                'already_funded' => true,
+                'escrow_data' => $escrow_data
+            ]);
+            return;
+        } elseif ($escrow_status === 'FINALIZED') {
+            wp_send_json_error([
+                'message' => '<strong>Escrow Already Completed</strong><br><br>This escrow has already been completed and funds released to seller. Status: FINALIZED'
+            ]);
+            return;
+        }
+        
+        // Get merchant/seller ID from meta
+        $seller_id = get_post_meta($project_id, 'mnt_escrow_seller', true);
+        
+        error_log('=== MNT Fund Escrow - Preparing API Call ===');
+        error_log('project_id: ' . $project_id . ' (type: ' . gettype($project_id) . ')');
+        error_log('client_id (user_id): ' . $user_id . ' (type: ' . gettype($user_id) . ')');
+        error_log('merchant_id (seller_id): ' . $seller_id . ' (type: ' . gettype($seller_id) . ')');
+        error_log('seller_id is_empty: ' . (empty($seller_id) ? 'YES' : 'NO'));
+        
+        if (!$seller_id) {
+            error_log('MNT Fund Escrow - ERROR: seller_id is empty!');
+            wp_send_json_error(['message' => '<strong>Missing Seller ID</strong><br><br>Cannot fund escrow without seller information.<br>Project ID: ' . $project_id]);
+            return;
+        }
+        
+        // Call the client_release_funds API endpoint
+        // This moves money: Client Wallet → Escrow Account (pending → funded)
+        error_log('MNT Fund Escrow - Calling client_release_funds($project_id, $user_id, $seller_id)');
+        $result = \MNT\Api\Escrow::client_release_funds($project_id, $user_id, $seller_id);
+        
+        error_log('MNT Fund Escrow - API Response: ' . json_encode($result));
+        
+        if ($result && !isset($result['error']) && !isset($result['detail'])) {
+            // Update task/project meta to reflect funded status
+            update_post_meta($project_id, 'mnt_escrow_status', 'funded');
+            update_post_meta($project_id, 'mnt_escrow_funded_at', current_time('mysql'));
+            
+            // Trigger task purchase - update task status to "hired"
+            error_log('MNT Fund Escrow - Triggering task purchase for task ' . $project_id);
+            
+            // Update task status to hired
+            update_post_meta($project_id, '_post_project_status', 'hired');
+            update_post_meta($project_id, '_hired_status', 'hired');
+            wp_update_post([
+                'ID' => $project_id,
+                'post_status' => 'hired'
+            ]);
+            
+            // Create WooCommerce order for the task purchase
+            $order_id = null;
+            $order_url = '';
+            
+            if (class_exists('WooCommerce') && $seller_id) {
+                try {
+                    $order = wc_create_order(['customer_id' => $user_id]);
+                    
+                    if (!is_wp_error($order)) {
+                        // Get task/product details
+                        $task_post = get_post($project_id);
+                        $task_title = $task_post ? $task_post->post_title : 'Task #' . $project_id;
+                        $escrow_amount = get_post_meta($project_id, 'mnt_escrow_amount', true);
+                        
+                        // Add custom line item for the task
+                        $item = new WC_Order_Item_Product();
+                        $item->set_name($task_title);
+                        $item->set_quantity(1);
+                        $item->set_subtotal($escrow_amount);
+                        $item->set_total($escrow_amount);
+                        $order->add_item($item);
+                        
+                        // Store escrow metadata
+                        $order->add_meta_data('mnt_escrow_id', get_post_meta($project_id, 'mnt_escrow_id', true));
+                        $order->add_meta_data('project_id', $project_id);
+                        $order->add_meta_data('task_product_id', $project_id);
+                        $order->add_meta_data('seller_id', $seller_id);
+                        $order->add_meta_data('buyer_id', $user_id);
+                        $order->add_meta_data('_task_status', 'hired');
+                        $order->add_meta_data('payment_type', 'escrow');
+                        $order->add_meta_data('escrow_funded', 'yes');
+                        
+                        // Add Taskbot-compatible invoice data
+                        $invoice_data = [
+                            'project_id' => $project_id,
+                            'project_type' => 'fixed',
+                            'seller_shares' => $escrow_amount,
+                            'payment_method' => 'escrow',
+                            'escrow_id' => get_post_meta($project_id, 'mnt_escrow_id', true),
+                            'funded_at' => current_time('mysql')
+                        ];
+                        $order->add_meta_data('cus_woo_product_data', $invoice_data);
+                        
+                        $order->set_total($escrow_amount);
+                        $order->set_status('completed'); // Mark as completed since it's paid via escrow
+                        $order->save();
+                        
+                        $order_id = $order->get_id();
+                        $order_url = $order->get_view_order_url();
+                        
+                        // Link order to task
+                        update_post_meta($project_id, 'mnt_wc_order_id', $order_id);
+                        
+                        error_log('MNT Fund Escrow - WooCommerce order created: ' . $order_id);
+                    } else {
+                        error_log('MNT Fund Escrow - WooCommerce order creation failed: ' . $order->get_error_message());
+                    }
+                } catch (Exception $e) {
+                    error_log('MNT Fund Escrow - Exception creating WC order: ' . $e->getMessage());
+                }
+            }
+            
+            $success_msg = '<strong>Escrow Funded & Task Purchased!</strong><br><br>';
+            $success_msg .= 'Funds have been moved from your wallet to the escrow account.<br><br>';
+            $success_msg .= '<strong>Status:</strong> FUNDED & HIRED<br>';
+            if ($order_id) {
+                $success_msg .= '<strong>Order ID:</strong> #' . $order_id . '<br>';
+                if ($order_url) {
+                    $success_msg .= '<a href="' . esc_url($order_url) . '" target="_blank" style="color:#3b82f6;text-decoration:underline;">View Order Details</a>';
+                }
+            }
+            
+            // Get redirect URL for ongoing tasks (buyer insights page)
+            $redirect_url = '';
+            if (class_exists('Taskbot_Profile_Menu')) {
+                $redirect_url = Taskbot_Profile_Menu::taskbot_profile_menu_link('earnings', $user_id, true, 'insights');
+            }
+            
+            wp_send_json_success([
+                'message' => $success_msg,
+                'result' => $result,
+                'order_id' => $order_id,
+                'task_hired' => true,
+                'redirect_url' => $redirect_url
+            ]);
+        } else {
+            $error_msg = isset($result['detail']) ? $result['detail'] : (isset($result['error']) ? $result['error'] : (isset($result['message']) ? $result['message'] : 'Failed to fund escrow.'));
+            
+            error_log('MNT Fund Escrow - ERROR: ' . $error_msg);
+            error_log('MNT Fund Escrow - Full API Response: ' . print_r($result, true));
+            
+            // Build detailed error message
+            $detailed_error = '<strong>Failed to fund escrow:</strong><br><br>';
+            $detailed_error .= '<strong>API Error:</strong> ' . esc_html($error_msg) . '<br><br>';
+            
+            // Add full API response for debugging
+            if (!empty($result)) {
+                $detailed_error .= '<strong>Full API Response:</strong><br>';
+                $detailed_error .= '<pre style="background: #1f2937; color: #f3f4f6; padding: 10px; border-radius: 4px; overflow: auto; max-height: 300px; font-size: 11px;">';
+                $detailed_error .= esc_html(print_r($result, true));
+                $detailed_error .= '</pre>';
+            }
+            
+            wp_send_json_error([
+                'message' => $detailed_error,
+                'result' => $result
+            ]);
+        }
+    }
+
+    /**
+     * AJAX Handler: Complete Escrow Funds (client completes contract for non-milestone projects)
+     * This releases funds from escrow to the seller's wallet
      */
     public static function handle_complete_escrow_funds_ajax() {
         check_ajax_referer('mnt_nonce', 'nonce');
+        
         $project_id = isset($_POST['project_id']) ? intval($_POST['project_id']) : 0;
         $user_id = isset($_POST['user_id']) ? intval($_POST['user_id']) : 0;
+        $proposal_id = isset($_POST['proposal_id']) ? intval($_POST['proposal_id']) : 0;
+        
+        error_log('MNT Complete Contract - Received: project_id=' . $project_id . ', user_id=' . $user_id . ', proposal_id=' . $proposal_id);
+        
         if (!$project_id || !$user_id) {
             wp_send_json_error(['message' => 'Missing project or user ID.']);
+            return;
         }
-        $result = \MNT\Api\Escrow::client_release_funds($user_id, $project_id);
-        if (isset($result['status']) && strtoupper($result['status']) === 'FUNDED') {
-            // Update project status to 'hired' when funds are successfully released
-            update_post_meta($project_id, '_post_project_status', 'hired');
-            update_post_meta($project_id, 'mnt_escrow_status', 'funded');
+        
+        // Get seller ID from proposal author (same as fund_escrow does)
+        $seller_id = 0;
+        
+        if ($proposal_id) {
+            $proposal = get_post($proposal_id);
+            if ($proposal) {
+                $seller_id = $proposal->post_author;
+                error_log('MNT Complete Contract - Got seller_id from proposal author: ' . $seller_id);
+            }
+        }
+        
+        // Fallback to post meta if proposal_id not provided
+        if (!$seller_id) {
+            $seller_id = get_post_meta($project_id, 'mnt_escrow_seller', true);
+            error_log('MNT Complete Contract - Got seller_id from post meta: ' . $seller_id);
+        }
+        
+        if (!$seller_id) {
+            wp_send_json_error(['message' => '<strong>Missing Seller ID</strong><br><br>Cannot complete escrow without seller information. Please provide proposal_id.']);
+            return;
+        }
+        
+        // First check if escrow transaction exists for this project
+        $escrow_check = \MNT\Api\Escrow::get_escrow_by_id($project_id, $seller_id);
+        error_log('MNT Complete Escrow - Escrow Check: ' . json_encode($escrow_check));
+        
+        if (!$escrow_check || isset($escrow_check['detail'])) {
+            $error_msg = '<strong>No Escrow Transaction Found</strong><br><br>';
+            $error_msg .= 'Could not find an escrow transaction for this project.<br><br>';
+            $error_msg .= '<strong>Project ID:</strong> ' . $project_id . '<br>';
+            $error_msg .= '<strong>User ID:</strong> ' . $user_id . '<br><br>';
+            $error_msg .= '<strong>Possible reasons:</strong><br>';
+            $error_msg .= '• This project was not hired through escrow<br>';
+            $error_msg .= '• The escrow payment was not completed<br>';
+            $error_msg .= '• This is a milestone project (use milestone approval instead)<br><br>';
+            
+            if (isset($escrow_check['detail'])) {
+                $error_msg .= '<strong>API Response:</strong> ' . esc_html($escrow_check['detail']) . '<br>';
+            }
+            
+            error_log('MNT Complete Escrow - ERROR: No escrow found for project ' . $project_id);
+            
+            wp_send_json_error(['message' => $error_msg]);
+            return;
+        }
+        
+        // Check if escrow is in FUNDED status
+        $escrow_status = isset($escrow_check['status']) ? strtoupper($escrow_check['status']) : '';
+        if ($escrow_status !== 'FUNDED') {
+            $error_msg = '<strong>Invalid Escrow Status</strong><br><br>';
+            $error_msg .= 'The escrow transaction is not in FUNDED status.<br><br>';
+            $error_msg .= '<strong>Current Status:</strong> ' . esc_html($escrow_status) . '<br>';
+            $error_msg .= '<strong>Project ID:</strong> ' . $project_id . '<br><br>';
+            
+            if ($escrow_status === 'FINALIZED') {
+                $error_msg .= 'This escrow has already been completed and funds released.';
+            } else if ($escrow_status === 'PENDING') {
+                $error_msg .= 'This escrow is still pending. Please wait for it to be funded.';
+            }
+            
+            error_log('MNT Complete Escrow - ERROR: Invalid status ' . $escrow_status . ' for project ' . $project_id);
+            
+            wp_send_json_error(['message' => $error_msg]);
+            return;
+        }
+        
+        error_log('=== MNT COMPLETE CONTRACT - API CALL DETAILS ===');
+        error_log('Endpoint: POST https://escrow-api-dfl6.onrender.com/api/escrow/client_confirm');
+        error_log('Method: client_confirm()');
+        error_log('Payload that will be sent:');
+        error_log('  project_id: ' . $project_id . ' (type: ' . gettype($project_id) . ')');
+        error_log('  client_id: ' . $user_id . ' (type: ' . gettype($user_id) . ')');
+        error_log('  merchant_id: ' . $seller_id . ' (type: ' . gettype($seller_id) . ')');
+        error_log('  confirm_status: true');
+        error_log('  milestone_key: null');
+        error_log('Expected Result: Funds move from Escrow Account → Seller Wallet');
+        error_log('Status Change: FUNDED → FINALIZED');
+        error_log('================================================');
+        
+        // Call the client_confirm API to release funds from escrow to seller wallet
+        // This moves: Escrow Account → Seller Wallet (funded → finalized)
+        $result = \MNT\Api\Escrow::client_confirm($project_id, $user_id, $seller_id, true);
+        
+        error_log('=== MNT COMPLETE CONTRACT - API RESPONSE ===');
+        error_log('Response: ' . json_encode($result));
+        error_log('Has error: ' . (isset($result['error']) ? 'YES - ' . $result['error'] : 'NO'));
+        error_log('Has detail: ' . (isset($result['detail']) ? 'YES - ' . $result['detail'] : 'NO'));
+        error_log('Has message: ' . (isset($result['message']) ? 'YES - ' . $result['message'] : 'NO'));
+        error_log('===========================================');
+        
+        if ($result && !isset($result['error']) && !isset($result['detail'])) {
+            // Update project status to 'completed' when funds are successfully released to seller
+            update_post_meta($project_id, '_post_project_status', 'completed');
+            update_post_meta($project_id, 'mnt_escrow_status', 'finalized');
+            update_post_meta($project_id, 'mnt_escrow_completed_at', current_time('mysql'));
             
             // Also update the post status if it's a proposal
             $proposal_id = get_post_meta($project_id, 'mnt_proposal_id', true);
             if ($proposal_id) {
-                wp_update_post(['ID' => $proposal_id, 'post_status' => 'hired']);
+                wp_update_post(['ID' => $proposal_id, 'post_status' => 'completed']);
             }
             
-            wp_send_json_success(['message' => $result['message'] ?? 'Funds released successfully', 'client_release_response' => $result]);
+            wp_send_json_success([
+                'message' => $result['message'] ?? 'Contract completed! Funds released to seller wallet.',
+                'result' => $result
+            ]);
         } else {
-            $msg = $result['message'] ?? ($result['error'] ?? 'Failed to move funds.');
-            wp_send_json_error(['message' => $msg, 'client_release_response' => $result]);
+            $error_msg = isset($result['detail']) ? $result['detail'] : (isset($result['error']) ? $result['error'] : (isset($result['message']) ? $result['message'] : 'Failed to complete contract.'));
+            
+            error_log('MNT Complete Escrow - ERROR: ' . $error_msg);
+            error_log('MNT Complete Escrow - Full API Response: ' . print_r($result, true));
+            
+            // Build detailed error message
+            $detailed_error = '<strong>Failed to complete contract:</strong><br><br>';
+            $detailed_error .= '<strong>API Error:</strong> ' . esc_html($error_msg) . '<br><br>';
+            
+            // Add full API response for debugging
+            if (!empty($result)) {
+                $detailed_error .= '<strong>Full API Response:</strong><br>';
+                $detailed_error .= '<pre style="background: #1f2937; color: #f3f4f6; padding: 10px; border-radius: 4px; overflow: auto; max-height: 300px; font-size: 11px;">';
+                $detailed_error .= esc_html(print_r($result, true));
+                $detailed_error .= '</pre>';
+            }
+            
+            wp_send_json_error([
+                'message' => $detailed_error,
+                'result' => $result
+            ]);
         }
     }
 
@@ -327,7 +943,8 @@ class Init {
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('mnt_nonce'),
             'restUrl' => rest_url('mnt/v1'),
-            'restNonce' => wp_create_nonce('wp_rest')
+            'restNonce' => wp_create_nonce('wp_rest'),
+            'currentUserId' => get_current_user_id()
         ];
         wp_localize_script('mnt-escrow-script', 'mntEscrow', $mnt_escrow_localize);
         // Enqueue and localize mnt-complete-escrow.js for modal Complete button
@@ -709,10 +1326,12 @@ class Init {
         
         // Create escrow transaction via API (this automatically deducts from wallet)
         // IMPORTANT: Pass project_id so backend can link the escrow to this project
-        $escrow_result = \MNT\Api\Escrow::create((string)$seller_id, (string)$buyer_id, $amount, (string)$project_id);
-        
         error_log('=== MNT Escrow Creation Request ===');
         error_log('Seller: ' . $seller_id . ', Buyer: ' . $buyer_id . ', Amount: ' . $amount . ', Project: ' . $project_id);
+        
+        $escrow_result = \MNT\Api\Escrow::create((string)$seller_id, (string)$buyer_id, $amount, (string)$project_id);
+        
+        error_log('=== MNT Escrow Creation Response ===');
         error_log('Response: ' . print_r($escrow_result, true));
         
         if (!$escrow_result || isset($escrow_result['error'])) {

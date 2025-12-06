@@ -11,6 +11,10 @@ $(document).on('submit', '#mnt-hire-form', function(e) {
     formData.push({ name: 'action', value: 'mnt_create_escrow_transaction' });
     formData.push({ name: 'nonce', value: mntEscrow.nonce });
 
+    console.log('MNT: Creating Escrow - Endpoint:', mntEscrow.ajaxUrl);
+    console.log('MNT: Creating Escrow - Payload:', formData);
+    console.log('MNT: Creating Escrow - Formatted Data:', Object.fromEntries(formData.map(item => [item.name, item.value])));
+
     $.ajax({
         url: mntEscrow.ajaxUrl,
         type: 'POST',

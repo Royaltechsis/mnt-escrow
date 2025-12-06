@@ -136,12 +136,12 @@ class HookOverride {
         }
         
         // Create escrow transaction
+        // API signature: create(merchant_id, client_id, project_id, amount)
         $result = Escrow::create(
-            $buyer_id,
             $seller_id,
-            $amount,
+            $buyer_id,
             $task_id,
-            'Task: ' . $task->post_title
+            $amount
         );
         
         if ($result && isset($result['success']) && $result['success']) {
@@ -185,38 +185,40 @@ class HookOverride {
      * When buyer approves task, release escrow
      */
     public static function on_task_approved($task_id, $buyer_id) {
-        $escrow_id = get_post_meta($task_id, 'mnt_escrow_id', true);
+        // Get seller ID for API call
+        $seller_id = get_post_meta($task_id, 'mnt_seller_id', true);
         
-        if ($escrow_id) {
-            $result = Escrow::release($escrow_id, $buyer_id);
+        if ($seller_id) {
+            // Use client_confirm to release funds from escrow to seller wallet
+            $result = Escrow::client_confirm($task_id, $buyer_id, $seller_id, true);
             
-            if ($result && isset($result['success']) && $result['success']) {
+            if ($result && !isset($result['error'])) {
                 update_post_meta($task_id, 'mnt_escrow_status', 'released');
                 
                 // Update local log
-                \MNT\Helpers\Logger::update_escrow_status($escrow_id, 'released');
+                \MNT\Helpers\Logger::update_escrow_status($task_id, 'released');
                 
                 // Log the release
-                do_action('mnt_escrow_released', $escrow_id, $task_id, $buyer_id);
+                do_action('mnt_escrow_released', $task_id, $task_id, $buyer_id);
             }
         }
     }
 
     /**
-     * When buyer rejects task, refund escrow
+     * When buyer rejects task, cancel escrow transaction
      */
     public static function on_task_rejected($task_id, $buyer_id) {
-        $escrow_id = get_post_meta($task_id, 'mnt_escrow_id', true);
         $seller_id = get_post_meta($task_id, 'mnt_seller_id', true);
         
-        if ($escrow_id && $seller_id) {
-            $result = Escrow::refund($escrow_id, $seller_id);
+        if ($seller_id) {
+            // Use cancel_transaction to cancel and refund escrow
+            $result = Escrow::cancel_transaction($task_id, $buyer_id, $seller_id);
             
-            if ($result && isset($result['success']) && $result['success']) {
+            if ($result && !isset($result['error'])) {
                 update_post_meta($task_id, 'mnt_escrow_status', 'refunded');
                 
                 // Log the refund
-                do_action('mnt_escrow_refunded', $escrow_id, $task_id, $buyer_id);
+                do_action('mnt_escrow_refunded', $task_id, $task_id, $buyer_id);
             }
         }
     }
@@ -225,17 +227,24 @@ class HookOverride {
      * When task is disputed
      */
     public static function on_task_disputed($task_id, $user_id) {
-        $escrow_id = get_post_meta($task_id, 'mnt_escrow_id', true);
+        // Get the other party's ID
+        $buyer_id = get_post_meta($task_id, 'mnt_buyer_id', true);
+        $seller_id = get_post_meta($task_id, 'mnt_seller_id', true);
         
-        if ($escrow_id) {
+        // Determine if current user is buyer or seller
+        $client_id = ($user_id == $buyer_id) ? $buyer_id : $seller_id;
+        $merchant_id = ($user_id == $buyer_id) ? $seller_id : $buyer_id;
+        
+        if ($client_id && $merchant_id) {
             $reason = get_post_meta($task_id, 'dispute_reason', true) ?: 'Task disputed';
-            $result = Escrow::dispute($escrow_id, $user_id, $reason);
+            // Use dispute_transaction with project_id, client_id, merchant_id, reason
+            $result = Escrow::dispute_transaction($task_id, $client_id, $merchant_id, $reason);
             
-            if ($result && isset($result['success']) && $result['success']) {
+            if ($result && !isset($result['error'])) {
                 update_post_meta($task_id, 'mnt_escrow_status', 'disputed');
                 
                 // Notify admin
-                do_action('mnt_escrow_disputed', $escrow_id, $task_id, $user_id, $reason);
+                do_action('mnt_escrow_disputed', $task_id, $task_id, $user_id, $reason);
             }
         }
     }
@@ -261,22 +270,43 @@ class HookOverride {
         return false;
     }
 
-    /**
+    /**  check again 
      * When proposal/project is completed by buyer
      * This fires when buyer marks the contract as completed
      */
     public static function on_proposal_completed($proposal_id, $buyer_id) {
-        // Get project ID from proposal
+        // Get project ID from proposal meta
         $project_id = get_post_meta($proposal_id, 'project_id', true);
         
         if (!$project_id) {
-            $project_id = $proposal_id; // Sometimes proposal_id IS the project_id
+            // Try alternative meta key
+            $project_id = get_post_meta($proposal_id, '_project_id', true);
+        }
+        
+        if (!$project_id) {
+            // Try getting from proposal post parent
+            $proposal = get_post($proposal_id);
+            if ($proposal && $proposal->post_parent) {
+                $project_id = $proposal->post_parent;
+            }
+        }
+        
+        if (!$project_id) {
+            error_log('MNT Escrow: Cannot find project_id for proposal ' . $proposal_id);
+            return;
         }
         
         error_log('MNT Escrow: on_proposal_completed called - proposal_id: ' . $proposal_id . ', buyer_id: ' . $buyer_id . ', project_id: ' . $project_id);
         
+        // Get seller ID from meta
+        $seller_id = get_post_meta($project_id, 'mnt_escrow_seller', true);
+        if (!$seller_id) {
+            error_log('MNT Escrow: Cannot confirm - missing seller ID for project ' . $project_id);
+            return;
+        }
+        
         // Call escrow client_confirm endpoint
-        $result = Escrow::client_confirm($project_id, $buyer_id, true);
+        $result = Escrow::client_confirm($project_id, $buyer_id, $seller_id, true);
         
         error_log('MNT Escrow: client_confirm API response: ' . json_encode($result));
         
@@ -290,31 +320,13 @@ class HookOverride {
             update_post_meta($proposal_id, 'mnt_client_confirmed', true);
             update_post_meta($proposal_id, 'mnt_client_confirmed_at', current_time('mysql'));
             
-            // Check if both parties have now confirmed
-            $escrow_details = Escrow::get_escrow_by_id($project_id);
-            
-            if ($escrow_details && isset($escrow_details['client_agree']) && isset($escrow_details['merchant_agree'])) {
-                if ($escrow_details['client_agree'] === true && $escrow_details['merchant_agree'] === true) {
-                    // Both parties confirmed - automatically release funds
-                    // IMPORTANT: Use merchant_id (seller) from escrow details, not buyer_id
-                    $seller_id = isset($escrow_details['merchant_id']) ? $escrow_details['merchant_id'] : '';
-                    if ($seller_id) {
-                        error_log('MNT Escrow: Both parties confirmed project #' . $project_id . '! Releasing funds to seller #' . $seller_id);
-                        $release_result = Escrow::merchant_release_funds($project_id, $seller_id);
-                        error_log('MNT Escrow: Release Funds Result: ' . json_encode($release_result));
-                        
-                        if ($release_result && !isset($release_result['error'])) {
-                            update_post_meta($proposal_id, 'mnt_funds_released', true);
-                            update_post_meta($proposal_id, 'mnt_funds_released_at', current_time('mysql'));
-                        }
-                    } else {
-                        error_log('MNT Escrow: Cannot release funds - seller ID not found in escrow details');
-                    }
-                }
-            }
+            // Client confirmation releases funds to seller wallet - project is now complete
+            error_log('MNT Escrow: Client confirmed project #' . $project_id . '! Funds released to seller.');
+            update_post_meta($proposal_id, 'mnt_funds_released', true);
+            update_post_meta($proposal_id, 'mnt_funds_released_at', current_time('mysql'));
             
             // Log the confirmation
-            error_log('MNT Escrow: Client confirmed project #' . $project_id . ' by buyer #' . $buyer_id);
+            error_log('MNT Escrow: Client confirmed and released funds for project #' . $project_id . ' by buyer #' . $buyer_id);
             do_action('mnt_client_confirmed', $project_id, $proposal_id, $buyer_id);
         } else {
             // Log error
@@ -326,8 +338,15 @@ class HookOverride {
      * When project is completed
      */
     public static function on_project_completed($project_id, $buyer_id) {
+        // Get seller ID from meta
+        $seller_id = get_post_meta($project_id, 'mnt_escrow_seller', true);
+        if (!$seller_id) {
+            error_log('MNT Escrow: Cannot confirm - missing seller ID for project ' . $project_id);
+            return;
+        }
+        
         // Call escrow client_confirm endpoint
-        $result = Escrow::client_confirm($project_id, $buyer_id, true);
+        $result = Escrow::client_confirm($project_id, $buyer_id, $seller_id, true);
         
         // Check if API call succeeded (check for error absence or success flag)
         $is_success = ($result && !isset($result['error'])) || (isset($result['success']) && $result['success']);
@@ -337,31 +356,13 @@ class HookOverride {
             update_post_meta($project_id, 'mnt_client_confirmed', true);
             update_post_meta($project_id, 'mnt_client_confirmed_at', current_time('mysql'));
             
-            // Check if both parties have now confirmed
-            $escrow_details = Escrow::get_escrow_by_id($project_id);
-            
-            if ($escrow_details && isset($escrow_details['client_agree']) && isset($escrow_details['merchant_agree'])) {
-                if ($escrow_details['client_agree'] === true && $escrow_details['merchant_agree'] === true) {
-                    // Both parties confirmed - automatically release funds
-                    // IMPORTANT: Use merchant_id (seller) from escrow details, not buyer_id
-                    $seller_id = isset($escrow_details['merchant_id']) ? $escrow_details['merchant_id'] : '';
-                    if ($seller_id) {
-                        error_log('MNT Escrow: Both parties confirmed project #' . $project_id . '! Releasing funds to seller #' . $seller_id);
-                        $release_result = Escrow::merchant_release_funds($project_id, $seller_id);
-                        error_log('MNT Escrow: Release Funds Result: ' . json_encode($release_result));
-                        
-                        if ($release_result && !isset($release_result['error'])) {
-                            update_post_meta($project_id, 'mnt_funds_released', true);
-                            update_post_meta($project_id, 'mnt_funds_released_at', current_time('mysql'));
-                        }
-                    } else {
-                        error_log('MNT Escrow: Cannot release funds - seller ID not found in escrow details');
-                    }
-                }
-            }
+            // Client confirmation releases funds to seller wallet - project is now complete
+            error_log('MNT Escrow: Client confirmed project #' . $project_id . '! Funds released to seller.');
+            update_post_meta($project_id, 'mnt_funds_released', true);
+            update_post_meta($project_id, 'mnt_funds_released_at', current_time('mysql'));
             
             // Log the confirmation
-            error_log('MNT Escrow: Client confirmed project #' . $project_id . ' by buyer #' . $buyer_id);
+            error_log('MNT Escrow: Client confirmed and released funds for project #' . $project_id . ' by buyer #' . $buyer_id);
             do_action('mnt_client_confirmed', $project_id, null, $buyer_id);
         } else {
             // Log error
@@ -372,6 +373,7 @@ class HookOverride {
     /**
      * Intercept rating proposal AJAX to trigger completion
      * This is called before the Taskbot AJAX handler
+     * If escrow fails, prevents Taskbot from completing the contract
      */
     public static function intercept_rating_proposal() {
         error_log('MNT Escrow: intercept_rating_proposal called');
@@ -388,16 +390,66 @@ class HookOverride {
         
         error_log('MNT Escrow: Processing - proposal_id: ' . $proposal_id . ', buyer_id: ' . $buyer_id);
         
-        // Call our completion handler - but catch any errors to prevent blocking
-        try {
-            self::on_proposal_completed($proposal_id, $buyer_id);
-            error_log('MNT Escrow: on_proposal_completed executed successfully');
-        } catch (\Exception $e) {
-            error_log('MNT Escrow: Error in on_proposal_completed: ' . $e->getMessage());
-            error_log('MNT Escrow: Stack trace: ' . $e->getTraceAsString());
+        // Get project ID to validate escrow
+        $project_id = get_post_meta($proposal_id, 'project_id', true);
+        if (!$project_id) {
+            $project_id = get_post_meta($proposal_id, '_project_id', true);
+        }
+        if (!$project_id) {
+            $proposal = get_post($proposal_id);
+            if ($proposal && $proposal->post_parent) {
+                $project_id = $proposal->post_parent;
+            }
         }
         
-        error_log('MNT Escrow: Continuing to Taskbot handler');
+        if (!$project_id) {
+            error_log('MNT Escrow: Cannot find project_id - blocking completion');
+            wp_send_json_error([
+                'message' => 'Cannot complete contract: Project information not found.'
+            ]);
+            return;
+        }
+        
+        // Get seller ID for escrow validation
+        $seller_id = get_post_meta($project_id, 'mnt_escrow_seller', true);
+        if (!$seller_id) {
+            error_log('MNT Escrow: Cannot find seller_id - blocking completion');
+            wp_send_json_error([
+                'message' => 'Cannot complete contract: Seller information not found.'
+            ]);
+            return;
+        }
+        
+        // Call escrow client_confirm endpoint
+        $result = Escrow::client_confirm($project_id, $buyer_id, $seller_id, true);
+        
+        error_log('MNT Escrow: client_confirm API response: ' . json_encode($result));
+        
+        // Check if API call succeeded
+        $is_success = ($result && !isset($result['error']) && !isset($result['detail'])) || (isset($result['success']) && $result['success']);
+        
+        if (!$is_success) {
+            // Escrow failed - block Taskbot completion
+            $error_msg = isset($result['detail']) ? $result['detail'] : (isset($result['error']) ? $result['error'] : 'Failed to release escrow funds.');
+            
+            error_log('MNT Escrow: client_confirm FAILED - blocking completion: ' . $error_msg);
+            
+            wp_send_json_error([
+                'message' => 'Cannot complete contract: ' . $error_msg
+            ]);
+            return;
+        }
+        
+        // Escrow succeeded - update meta and mark funds as released
+        error_log('MNT Escrow: client_confirm succeeded - funds released to seller');
+        update_post_meta($proposal_id, 'mnt_client_confirmed', true);
+        update_post_meta($proposal_id, 'mnt_client_confirmed_at', current_time('mysql'));
+        update_post_meta($proposal_id, 'mnt_funds_released', true);
+        update_post_meta($proposal_id, 'mnt_funds_released_at', current_time('mysql'));
+        
+        do_action('mnt_client_confirmed', $project_id, $proposal_id, $buyer_id);
+        
+        error_log('MNT Escrow: Escrow successful - continuing to Taskbot handler');
         // Continue - let Taskbot handle the AJAX response
     }
 
@@ -425,21 +477,17 @@ class HookOverride {
             
             error_log('MNT Escrow: Project ID: ' . $project_id);
             
-            // Check if both parties have confirmed via escrow
-            $escrow_details = Escrow::get_escrow_by_id($project_id);
+            // Check if client has confirmed and funds are released
+            $client_confirmed = get_post_meta($post->ID, 'mnt_client_confirmed', true);
+            $funds_released = get_post_meta($post->ID, 'mnt_funds_released', true);
             
-            error_log('MNT Escrow: Escrow details for status check: ' . json_encode($escrow_details));
+            error_log('MNT Escrow: Status check - client_confirmed: ' . ($client_confirmed ? 'YES' : 'NO') . ', funds_released: ' . ($funds_released ? 'YES' : 'NO'));
             
-            $both_confirmed = false;
-            if ($escrow_details && isset($escrow_details['client_agree']) && isset($escrow_details['merchant_agree'])) {
-                $both_confirmed = ($escrow_details['client_agree'] === true && $escrow_details['merchant_agree'] === true);
-            }
-            
-            // If both parties haven't confirmed, allow first attempt (client is confirming now)
+            // If client hasn't confirmed yet, allow first attempt (client is confirming now)
             // Only prevent on subsequent attempts
             $already_prevented = get_transient('mnt_prevent_completion_' . $project_id);
             
-            if (!$both_confirmed && !$already_prevented) {
+            if (!$client_confirmed && !$already_prevented) {
                 error_log('MNT Escrow: First completion attempt for project #' . $project_id . ' - allowing client to confirm');
                 // Set transient to prevent infinite loop
                 set_transient('mnt_prevent_completion_' . $project_id, true, 60);
@@ -447,8 +495,8 @@ class HookOverride {
                 return;
             }
             
-            if (!$both_confirmed && $already_prevented) {
-                error_log('MNT Escrow: Preventing project #' . $project_id . ' completion - both parties must confirm first');
+            if (!$client_confirmed && $already_prevented) {
+                error_log('MNT Escrow: Preventing project #' . $project_id . ' completion - client must confirm and release funds first');
                 
                 // Revert status back to hired
                 remove_action('transition_post_status', [__CLASS__, 'handle_status_transition'], 10);
@@ -464,8 +512,8 @@ class HookOverride {
                 return;
             }
             
-            // Both confirmed - allow completion and handle buyer confirmation
-            error_log('MNT Escrow: Both parties confirmed project #' . $project_id . ' - allowing completion');
+            // Client confirmed - funds released - allow completion
+            error_log('MNT Escrow: Client confirmed and funds released for project #' . $project_id . ' - allowing completion');
             
             // Clear the transient
             delete_transient('mnt_prevent_completion_' . $project_id);

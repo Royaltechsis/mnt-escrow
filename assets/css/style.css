@@ -957,6 +957,16 @@
     color: #991b1b;
 }
 
+.type-escrow_transaction {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.type-escrow_milestone {
+    background: #e0f2fe;
+    color: #075985;
+}
+
 .type-escrow_fund {
     background: #fef3c7;
     color: #92400e;
@@ -995,6 +1005,11 @@
 .status-success {
     background: #d1fae5;
     color: #065f46;
+}
+
+.status-funded {
+    background: #dbeafe;
+    color: #1e40af;
 }
 
 .status-pending {

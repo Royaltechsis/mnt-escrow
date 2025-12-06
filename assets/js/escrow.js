@@ -574,4 +574,372 @@
         });
     });
 
+    /**
+     * Milestone Approval Handler - Releases funds to seller wallet
+     * Intercepts taskbot's milestone approval and calls MNT escrow API
+     */
+    $(document).on('click', '.tb_update_milestone', function(e) {
+        var $btn = $(this);
+        var status = $btn.data('status');
+        var proposalId = $btn.data('id');
+        var milestoneKey = $btn.data('key');
+        
+        // Only intercept buyer's approval (status = 'completed')
+        if (status === 'completed') {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            
+            console.log('MNT: Intercepting milestone approval', {
+                proposalId: proposalId,
+                milestoneKey: milestoneKey,
+                status: status
+            });
+            
+            // Get project_id from data attribute or page context
+            var projectId = $btn.data('project-id') || $btn.closest('[data-project-id]').data('project-id');
+            
+            // If project_id not found in data attributes, try to extract from page
+            if (!projectId) {
+                // Try to find it in the URL or page context
+                var urlParams = new URLSearchParams(window.location.search);
+                projectId = urlParams.get('project_id');
+            }
+            
+            if (!projectId) {
+                console.error('MNT: Could not find project_id for milestone approval');
+                alert('Error: Project ID not found. Please refresh the page and try again.');
+                return false;
+            }
+            
+            // Fetch seller_id first to show in console logs
+            var sellerId = null;
+            if (proposalId) {
+                $.ajax({
+                    url: mntEscrow.ajaxUrl,
+                    type: 'POST',
+                    async: false,
+                    data: {
+                        action: 'mnt_get_seller_from_proposal',
+                        nonce: mntEscrow.nonce,
+                        proposal_id: proposalId
+                    },
+                    success: function(response) {
+                        if (response.success && response.data.seller_id) {
+                            sellerId = response.data.seller_id;
+                        }
+                    }
+                });
+            }
+            
+            // Get current user ID (client/buyer)
+            var clientId = mntEscrow.currentUserId || null;
+            
+            var ajaxData = {
+                action: 'mnt_approve_milestone',
+                nonce: mntEscrow.nonce,
+                proposal_id: proposalId,
+                project_id: projectId,
+                milestone_key: milestoneKey
+            };
+            
+            console.log('=== MNT: MILESTONE APPROVAL CLICKED ===');
+            console.log('URL:', mntEscrow.ajaxUrl);
+            console.log('WordPress AJAX Data:', ajaxData);
+            console.log('');
+            console.log('=== Expected API Call ===');
+            console.log('Endpoint: POST https://escrow-api-dfl6.onrender.com/api/escrow/client_confirm_milestone');
+            console.log('API Payload:', {
+                project_id: projectId,
+                client_id: clientId || '(will be current_user_id from backend)',
+                merchant_id: sellerId,
+                milestone_key: milestoneKey,
+                confirm_status: true
+            });
+            console.log('===================================');
+            console.log('');
+            
+            if (!confirm('Approve this milestone and release funds to the seller?')) {
+                return false;
+            }
+            
+            var originalText = $btn.text();
+            $btn.prop('disabled', true).text('Approving & releasing funds...');
+            
+            $.ajax({
+                url: mntEscrow.ajaxUrl,
+                type: 'POST',
+                data: ajaxData,
+                success: function(response) {
+                    console.log('');
+                    console.log('=== MNT: MILESTONE APPROVAL RESPONSE ===');
+                    console.log('Success:', response.success);
+                    console.log('Message:', response.data && response.data.message);
+                    console.log('Full Response:', response);
+                    console.log('======================================');
+                    console.log('');
+                    
+                    if (response.success) {
+                        alert(response.data.message || 'Milestone approved! Funds released to seller wallet.');
+                        // Only reload after successful API response
+                        location.reload();
+                    } else {
+                        // Show full error message (includes formatted details from backend)
+                        var errorHtml = response.data.message || 'Failed to approve milestone.';
+                        
+                        // Create a temporary div to show formatted HTML error
+                        var $errorDiv = $('<div style="max-width: 600px; max-height: 500px; overflow: auto; text-align: left; padding: 20px;">' + errorHtml + '</div>');
+                        
+                        // Show in a modal or alert depending on what's available
+                        if (typeof bootbox !== 'undefined') {
+                            bootbox.alert({
+                                message: errorHtml,
+                                size: 'large'
+                            });
+                        } else {
+                            // Fallback: create a simple modal
+                            var $modal = $('<div class="mnt-error-modal" style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); z-index: 99999; max-width: 700px; max-height: 80vh; overflow: auto;"><button class="mnt-close-modal" style="float: right; background: #dc2626; color: white; border: none; padding: 5px 15px; border-radius: 4px; cursor: pointer;">Close</button>' + errorHtml + '</div>');
+                            var $overlay = $('<div class="mnt-error-overlay" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 99998;"></div>');
+                            
+                            $('body').append($overlay, $modal);
+                            
+                            $('.mnt-close-modal, .mnt-error-overlay').on('click', function() {
+                                $('.mnt-error-modal, .mnt-error-overlay').remove();
+                            });
+                        }
+                        
+                        console.error('MNT Milestone Approval Error Details:', response.data);
+                        $btn.prop('disabled', false).text(originalText);
+                    }
+                },
+                error: function(xhr, status, error) {
+                    console.error('MNT Milestone Approval Error:', error);
+                    alert('Error: Failed to approve milestone. Please try again.');
+                    $btn.prop('disabled', false).text(originalText);
+                }
+            });
+            
+            return false;
+        }
+    });
+
+    /**
+     * Complete Contract Handler - Non-milestone projects
+     * Intercepts "Complete without review" and "Complete contract" buttons
+     * Calls client_release_funds API to release funds from escrow to seller wallet
+     */
+    $(document).on('click', '.tb_complete_project, .tb_rating_project', function(e) {
+        var $btn = $(this);
+        var proposalId = $btn.data('proposal_id');
+        var userId = $btn.data('user_id');
+        
+        // Check if this is a milestone project - if so, let default handler take over
+        var isMilestoneProject = $btn.closest('.tb-completetask').find('.tb_update_milestone').length > 0;
+        
+        if (isMilestoneProject) {
+            console.log('MNT: Milestone project detected, using default handler');
+            return true; // Let taskbot handle milestone projects
+        }
+        
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        
+        console.log('MNT: Intercepting complete contract button', {
+            proposalId: proposalId,
+            userId: userId,
+            buttonClass: $btn.attr('class')
+        });
+        
+        console.log('MNT: Current page URL:', window.location.href);
+        console.log('MNT: URL search params:', window.location.search);
+        
+        // Get project_id from data attribute or page context
+        var projectId = $btn.data('project-id') || $btn.data('project_id') || $btn.closest('[data-project-id]').data('project-id');
+        
+        console.log('MNT: Initial projectId from button:', projectId);
+        console.log('MNT: Button data-project-id:', $btn.data('project-id'));
+        console.log('MNT: Button data-project_id:', $btn.data('project_id'));
+        console.log('MNT: Closest [data-project-id]:', $btn.closest('[data-project-id]').data('project-id'));
+        
+        // DON'T get from URL - the URL "id" parameter is actually the proposal_id, not project_id!
+        // If project_id not found in button data, fetch it from proposal
+        if (!projectId && proposalId) {
+            console.log('MNT: Fetching project_id from proposal via AJAX...');
+            // We need to make an AJAX call to get the project ID from proposal
+            $.ajax({
+                url: mntEscrow.ajaxUrl,
+                type: 'POST',
+                async: false, // Make synchronous to get projectId before proceeding
+                data: {
+                    action: 'mnt_get_project_from_proposal',
+                    nonce: mntEscrow.nonce,
+                    proposal_id: proposalId
+                },
+                success: function(response) {
+                    console.log('MNT: Get project from proposal response:', response);
+                    if (response.success && response.data.project_id) {
+                        projectId = response.data.project_id;
+                        console.log('MNT: Got projectId from proposal:', projectId);
+                    }
+                },
+                error: function(xhr, status, error) {
+                    console.error('MNT: Error fetching project_id:', error);
+                }
+            });
+        }
+        
+        console.log('MNT: Final projectId to be used:', projectId, '(type:', typeof projectId + ')');
+        console.log('MNT: ProposalId for reference:', proposalId, '(type:', typeof proposalId + ')');
+        
+        if (!projectId) {
+            console.error('MNT: Could not find project_id for complete contract');
+            alert('Error: Project ID not found. Please refresh the page and try again.');
+            return false;
+        }
+        
+        // Fetch seller_id from proposal before proceeding
+        var sellerId = null;
+        if (proposalId) {
+            $.ajax({
+                url: mntEscrow.ajaxUrl,
+                type: 'POST',
+                async: false, // Make synchronous to get sellerId before logging
+                data: {
+                    action: 'mnt_get_seller_from_proposal',
+                    nonce: mntEscrow.nonce,
+                    proposal_id: proposalId
+                },
+                success: function(response) {
+                    if (response.success && response.data.seller_id) {
+                        sellerId = response.data.seller_id;
+                    }
+                }
+            });
+        }
+        
+        console.log('=== MNT: COMPLETE CONTRACT BUTTON CLICKED ===');
+        console.log('Button data:', {
+            proposalId: proposalId,
+            userId: userId,
+            projectId: projectId,
+            sellerId: sellerId,
+            buttonClass: $btn.attr('class')
+        });
+        console.log('');
+        console.log('=== STEP 1: WordPress AJAX Request ===');
+        console.log('URL:', mntEscrow.ajaxUrl);
+        console.log('Action:', 'mnt_complete_escrow_funds');
+        console.log('AJAX Data:', {
+            action: 'mnt_complete_escrow_funds',
+            nonce: mntEscrow.nonce,
+            project_id: projectId,
+            user_id: userId,
+            proposal_id: proposalId
+        });
+        console.log('');
+        console.log('=== STEP 2: Expected Backend Flow ===');
+        console.log('Handler: handle_complete_escrow_funds_ajax() in init.php');
+        console.log('Will get seller_id from proposal author (proposal_id:', proposalId + ')');
+        console.log('Then call: Escrow->client_confirm()');
+        console.log('');
+        console.log('=== STEP 3: Expected API Call ===');
+        console.log('Endpoint: POST https://escrow-api-dfl6.onrender.com/api/escrow/client_confirm');
+        console.log('Expected Payload:', {
+            project_id: projectId,
+            client_id: userId,
+            merchant_id: sellerId || '(will be fetched from proposal ' + proposalId + ' author)',
+            confirm_status: true
+        });
+        console.log('Expected Response: {success: true, data: {...}}');
+        console.log('===================================');
+        console.log('');
+        
+        // Confirm action for "Complete without review"
+        if ($btn.hasClass('tb_complete_project')) {
+            if (!confirm('Are you sure you want to complete this contract without a review? Funds will be released to the seller.')) {
+                return false;
+            }
+        }
+        
+        var originalText = $btn.text();
+        $btn.prop('disabled', true).text('Releasing funds...');
+        
+        $.ajax({
+            url: mntEscrow.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'mnt_complete_escrow_funds',
+                nonce: mntEscrow.nonce,
+                project_id: projectId,
+                user_id: userId,
+                proposal_id: proposalId
+            },
+            success: function(response) {
+                console.log('');
+                console.log('=== MNT: COMPLETE CONTRACT RESPONSE ===');
+                console.log('Full Response:', response);
+                console.log('Success:', response.success);
+                console.log('Message:', response.data && response.data.message);
+                console.log('=====================================');
+                console.log('');
+                
+                if (response.success) {
+                    // If this is "Complete contract" button (with review), process the review first
+                    if ($btn.hasClass('tb_rating_project')) {
+                        // Let the review be submitted, then complete
+                        var rating = $('#tb_task_rating-' + proposalId).val();
+                        var details = $('#tb_rating_details-' + proposalId).val();
+                        var title = $('#tb_rating_title-' + proposalId).val();
+                        
+                        if (rating && details) {
+                            alert(response.data.message || 'Contract completed! Funds released to seller wallet.');
+                            // Continue with taskbot's review submission
+                            location.reload();
+                        } else {
+                            alert('Please provide a rating and feedback before completing the contract.');
+                            $btn.prop('disabled', false).text(originalText);
+                            return;
+                        }
+                    } else {
+                        // "Complete without review" - just show success and reload
+                        alert(response.data.message || 'Contract completed! Funds released to seller wallet.');
+                        location.reload();
+                    }
+                } else {
+                    // Enhanced error handling
+                    var errorMessage = response.data && response.data.message ? response.data.message : 'Failed to complete contract.';
+                    
+                    // Check if this is a "Transaction not found" error
+                    if (errorMessage.includes('Transaction not found') || errorMessage.includes('not found')) {
+                        errorMessage = 'No escrow transaction found for this project.\n\n' +
+                            'Possible reasons:\n' +
+                            '• The project was not hired through escrow\n' +
+                            '• The escrow payment was not completed\n' +
+                            '• The project ID does not match any escrow transaction\n\n' +
+                            'Project ID: ' + projectId + '\n' +
+                            'User ID: ' + userId + '\n\n' +
+                            'Please check if this project was paid through escrow.';
+                    }
+                    
+                    // Show error in a more user-friendly format
+                    if (confirm(errorMessage + '\n\nWould you like to see the full technical details?')) {
+                        // Show full error details
+                        var fullError = 'Full Error Details:\n\n' + 
+                            JSON.stringify(response, null, 2);
+                        alert(fullError);
+                    }
+                    
+                    $btn.prop('disabled', false).text(originalText);
+                }
+            },
+            error: function(xhr, status, error) {
+                console.error('MNT Complete Contract Error:', error);
+                alert('Error: Failed to complete contract. Please try again.');
+                $btn.prop('disabled', false).text(originalText);
+            }
+        });
+        
+        return false;
+    });
+
 })(jQuery);
+

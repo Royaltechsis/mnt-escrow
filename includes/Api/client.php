@@ -74,4 +74,47 @@ class Client {
 
         return json_decode($body, true);
     }
+
+    /**
+     * Send a DELETE request with optional body
+     * 
+     * @param string $endpoint API endpoint
+     * @param array $body Request body data
+     * @return array|false Decoded response or false on error
+     */
+    public static function delete($endpoint, $body = []) {
+        $url = self::$base . $endpoint;
+        
+        $args = [
+            'method' => 'DELETE',
+            'headers' => ['Content-Type' => 'application/json'],
+            'timeout' => 20,
+        ];
+        
+        if (!empty($body)) {
+            $args['body'] = json_encode($body);
+        }
+        
+        error_log('=== MNT API DELETE Request ===');
+        error_log('URL: ' . $url);
+        error_log('Body: ' . print_r($body, true));
+        
+        $res = wp_remote_request($url, $args);
+
+        if (is_wp_error($res)) {
+            error_log('=== MNT API DELETE Error ===');
+            error_log('Error: ' . $res->get_error_message());
+            return false;
+        }
+
+        $response_body = wp_remote_retrieve_body($res);
+        $response_code = wp_remote_retrieve_response_code($res);
+        $decoded = json_decode($response_body, true);
+        
+        error_log('=== MNT API DELETE Response ===');
+        error_log('Status Code: ' . $response_code);
+        error_log('Response Body: ' . $response_body);
+
+        return $decoded;
+    }
 }

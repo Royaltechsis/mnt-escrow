@@ -58,31 +58,65 @@ if (!empty($wallet_transactions)) {
 // Fetch escrow transactions from API
 $escrow_transactions = [];
 if (class_exists('MNT\Api\Escrow')) {
-    $escrow_result = \MNT\Api\Escrow::get_all_transactions($user_id, 'client');
+    // Determine actor based on user type
+    $user_type = apply_filters('taskbot_get_user_type', $user_id);
+    $actor = ($user_type === 'sellers') ? 'merchant' : 'client';
+    
+    error_log('MNT Transaction History - User ID: ' . $user_id . ', User Type: ' . $user_type . ', Actor: ' . $actor);
+    
+    $escrow_result = \MNT\Api\Escrow::get_all_transactions($user_id, $actor);
     if (is_array($escrow_result)) {
         foreach ($escrow_result as $escrow_tx) {
             // Get project title if project_id exists
-            $project_reference = 'Escrow #' . substr($escrow_tx['id'] ?? '', 0, 8);
-            if (!empty($escrow_tx['project_id'])) {
-                $project_id = intval($escrow_tx['project_id']);
+            $project_id = !empty($escrow_tx['project_id']) ? intval($escrow_tx['project_id']) : null;
+            $project_title = 'Unknown Project';
+            if ($project_id) {
                 $project = get_post($project_id);
                 if ($project) {
-                    $project_reference = 'Project: ' . $project->post_title;
+                    $project_title = $project->post_title;
                 }
             }
             
-            // Transform escrow transaction to match wallet transaction format
-            $escrow_transactions[] = [
-                'id' => $escrow_tx['id'] ?? '',
-                'type' => 'escrow_transaction',
-                'amount' => $escrow_tx['amount'] ?? 0,
-                'status' => strtolower($escrow_tx['status'] ?? 'pending'),
-                'reference_code' => $project_reference,
-                'timestamp' => $escrow_tx['created_at'] ?? date('Y-m-d H:i:s'),
-                'source' => 'Escrow',
-                'finalized_at' => $escrow_tx['finalized_at'] ?? null,
-                'project_id' => $escrow_tx['project_id'] ?? null
-            ];
+            // Check if this escrow has milestones
+            if (!empty($escrow_tx['milestones']) && is_array($escrow_tx['milestones'])) {
+                // Process each milestone as a separate transaction
+                foreach ($escrow_tx['milestones'] as $milestone) {
+                    $milestone_key = $milestone['key'] ?? '';
+                    $milestone_id = !empty($milestone_key) ? $milestone_key . ' (mk)' : 'N/A';
+                    $milestone_finished = $milestone['finished'] ?? false;
+                    
+                    $escrow_transactions[] = [
+                        'id' => $milestone_id,
+                        'type' => 'escrow_milestone',
+                        'amount' => $milestone['amount'] ?? 0,
+                        'status' => $milestone_finished ? 'completed' : 'funded',
+                        'reference_code' => 'Milestone: ' . ($milestone['name'] ?? 'Unnamed') . ' - ' . $project_title,
+                        'timestamp' => $escrow_tx['created_at'] ?? date('Y-m-d H:i:s'),
+                        'source' => 'Escrow',
+                        'finalized_at' => $milestone_finished ? ($escrow_tx['finalized_at'] ?? null) : null,
+                        'project_id' => $project_id,
+                        'milestone_key' => $milestone_key,
+                        'milestone_name' => $milestone['name'] ?? 'Unnamed',
+                        'milestone_description' => $milestone['description'] ?? ''
+                    ];
+                }
+            } else {
+                // Regular escrow transaction without milestones
+                $escrow_id = $escrow_tx['project_id'] ?? ($escrow_tx['id'] ?? '');
+                $transaction_id = !empty($escrow_id) ? $escrow_id . ' (pd)' : 'N/A';
+                
+                $escrow_transactions[] = [
+                    'id' => $transaction_id,
+                    'type' => 'escrow_transaction',
+                    'amount' => $escrow_tx['amount'] ?? 0,
+                    'status' => strtolower($escrow_tx['status'] ?? 'pending'),
+                    'reference_code' => 'Project: ' . $project_title,
+                    'timestamp' => $escrow_tx['created_at'] ?? date('Y-m-d H:i:s'),
+                    'source' => 'Escrow',
+                    'finalized_at' => $escrow_tx['finalized_at'] ?? null,
+                    'project_id' => $project_id
+                ];
+            }
         }
     }
 }
@@ -160,6 +194,8 @@ $balance = $wallet_result['balance'] ?? 0;
                         <option value="">All Types</option>
                         <option value="deposit" <?php selected($transaction_type, 'deposit'); ?>>Deposits</option>
                         <option value="withdrawal" <?php selected($transaction_type, 'withdrawal'); ?>>Withdrawals</option>
+                        <option value="escrow_transaction" <?php selected($transaction_type, 'escrow_transaction'); ?>>Escrow Transaction</option>
+                        <option value="escrow_milestone" <?php selected($transaction_type, 'escrow_milestone'); ?>>Escrow Milestone</option>
                         <option value="escrow_fund" <?php selected($transaction_type, 'escrow_fund'); ?>>Escrow Funded</option>
                         <option value="escrow_release" <?php selected($transaction_type, 'escrow_release'); ?>>Escrow Released</option>
                         <option value="escrow_refund" <?php selected($transaction_type, 'escrow_refund'); ?>>Escrow Refunded</option>
@@ -271,6 +307,20 @@ $balance = $wallet_result['balance'] ?? 0;
                         
                         // Status labels
                         $status_label = ucfirst($status);
+                        
+                        // Format transaction ID display
+                        // For escrow transactions, show full ID with (pd) or (mk) suffix
+                        // For wallet transactions, show shortened ID
+                        $display_id = $tx_id;
+                        if ($tx_type === 'escrow_transaction' || $tx_type === 'escrow_milestone') {
+                            // Show full ID for escrow (already includes (pd) or (mk))
+                            $display_id = $tx_id;
+                        } else {
+                            // Shorten wallet transaction IDs
+                            if (strlen($tx_id) > 12) {
+                                $display_id = substr($tx_id, 0, 8) . '...';
+                            }
+                        }
                         ?>
                         <tr class="tx-row tx-<?php echo esc_attr($tx_type); ?>">
                             <td class="tx-date">
@@ -278,7 +328,7 @@ $balance = $wallet_result['balance'] ?? 0;
                                 <span class="tx-time"><?php echo esc_html(date('h:i A', strtotime($date))); ?></span>
                             </td>
                             <td class="tx-id">
-                                <code><?php echo esc_html(substr($tx_id, 0, 8)); ?>...</code>
+                                <code><?php echo esc_html($display_id); ?></code>
                             </td>
                             <td class="tx-type">
                                 <span class="type-badge type-<?php echo esc_attr($tx_type); ?>">
