@@ -30,17 +30,11 @@ $project = $project_id ? get_post($project_id) : null;
 $proposal = $proposal_id ? get_post($proposal_id) : null;
 
 // Check if project is already hired
-$project_hired_status = get_post_meta($project_id, '_post_project_status', true);
-$is_already_hired = ($project_hired_status === 'hired');
+$is_already_hired = false;
 
-// Also check escrow status
-$existing_escrow_status = get_post_meta($project_id, 'mnt_escrow_status', true);
-if (!empty($existing_escrow_status) && in_array(strtoupper($existing_escrow_status), ['FUNDED', 'ACTIVE', 'COMPLETED'])) {
-    $is_already_hired = true;
-}
-
-// Check if specific milestone is already hired (for milestone projects)
+// For milestone projects, only check milestone-specific status
 if (!empty($milestone_key) && !empty($proposal_id)) {
+    // Check if THIS specific milestone is already hired
     $milestone_escrows = get_post_meta($project_id, 'mnt_milestone_escrows', true);
     if (!empty($milestone_escrows[$milestone_key])) {
         $milestone_status = strtoupper($milestone_escrows[$milestone_key]['status'] ?? '');
@@ -56,6 +50,16 @@ if (!empty($milestone_key) && !empty($proposal_id)) {
         if (in_array($milestone_proposal_status, ['hired', 'completed', 'in_progress'])) {
             $is_already_hired = true;
         }
+    }
+} else {
+    // For non-milestone projects, check project-level status
+    $project_hired_status = get_post_meta($project_id, '_post_project_status', true);
+    $is_already_hired = ($project_hired_status === 'hired');
+    
+    // Also check escrow status
+    $existing_escrow_status = get_post_meta($project_id, 'mnt_escrow_status', true);
+    if (!empty($existing_escrow_status) && in_array(strtoupper($existing_escrow_status), ['FUNDED', 'ACTIVE', 'COMPLETED'])) {
+        $is_already_hired = true;
     }
 }
 
