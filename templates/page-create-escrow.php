@@ -29,6 +29,36 @@ $seller = get_userdata($merchant_id);
 $project = $project_id ? get_post($project_id) : null;
 $proposal = $proposal_id ? get_post($proposal_id) : null;
 
+// Check if project is already hired
+$project_hired_status = get_post_meta($project_id, '_post_project_status', true);
+$is_already_hired = ($project_hired_status === 'hired');
+
+// Also check escrow status
+$existing_escrow_status = get_post_meta($project_id, 'mnt_escrow_status', true);
+if (!empty($existing_escrow_status) && in_array(strtoupper($existing_escrow_status), ['FUNDED', 'ACTIVE', 'COMPLETED'])) {
+    $is_already_hired = true;
+}
+
+// Check if specific milestone is already hired (for milestone projects)
+if (!empty($milestone_key) && !empty($proposal_id)) {
+    $milestone_escrows = get_post_meta($project_id, 'mnt_milestone_escrows', true);
+    if (!empty($milestone_escrows[$milestone_key])) {
+        $milestone_status = strtoupper($milestone_escrows[$milestone_key]['status'] ?? '');
+        if (in_array($milestone_status, ['FUNDED', 'ACTIVE', 'COMPLETED', 'PENDING'])) {
+            $is_already_hired = true;
+        }
+    }
+    
+    // Also check proposal meta for milestone status
+    $proposal_meta_check = get_post_meta($proposal_id, 'proposal_meta', true);
+    if (!empty($proposal_meta_check['milestone'][$milestone_key]['status'])) {
+        $milestone_proposal_status = $proposal_meta_check['milestone'][$milestone_key]['status'];
+        if (in_array($milestone_proposal_status, ['hired', 'completed', 'in_progress'])) {
+            $is_already_hired = true;
+        }
+    }
+}
+
 // Fetch milestone details if milestone_key is provided
 $milestone = null;
 $is_milestone = false;
@@ -75,6 +105,8 @@ if ($project_id) {
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']) && wp_verify_nonce($_POST['create_escrow_nonce'], 'create_escrow')) {
+    echo '<script>console.log("=== MNT ESCROW: Form Submission Started ===");</script>';
+    
     $project_id = intval($_POST['project_id']);
     $merchant_id = intval($_POST['merchant_id']);
     $client_id = intval($_POST['client_id']);
@@ -82,13 +114,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
     $proposal_id = isset($_POST['proposal_id']) ? intval($_POST['proposal_id']) : 0;
     $milestone_key_post = isset($_POST['milestone_key']) ? sanitize_text_field($_POST['milestone_key']) : '';
 
+    echo '<script>console.log("Step 1: Form Data Received", ' . json_encode([
+        'project_id' => $project_id,
+        'merchant_id' => $merchant_id,
+        'client_id' => $client_id,
+        'amount' => $amount,
+        'proposal_id' => $proposal_id,
+        'milestone_key' => $milestone_key_post
+    ]) . ');</script>';
+
     // Check for valid project_id
     if (empty($project_id) || $project_id === 0) {
+        echo '<script>console.error("Step 2: Validation Failed - Invalid Project ID");</script>';
         $escrow_error = '<strong>Error:</strong> Project ID is missing or invalid. Please ensure you are hiring for a valid project.';
     } else {
+        echo '<script>console.log("Step 2: Validation Passed - Project ID is valid");</script>';
         $buyer_check = get_userdata($client_id);
         $seller_check = get_userdata($merchant_id);
         if (!$buyer_check || !$seller_check) {
+            echo '<script>console.error("Step 3: User Validation Failed", ' . json_encode([
+                'buyer_found' => (bool)$buyer_check,
+                'seller_found' => (bool)$seller_check
+            ]) . ');</script>';
             $escrow_error = '<strong>Error:</strong> ';
             if (!$buyer_check) {
                 $escrow_error .= 'Buyer (client_id) user not found. ';
@@ -97,6 +144,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                 $escrow_error .= 'Seller (merchant_id) user not found.';
             }
         } else {
+            echo '<script>console.log("Step 3: User Validation Passed - Both buyer and seller found");</script>';
             $escrow_project_id = (string)$project_id;
             
             // Check if this is a milestone payment
@@ -104,12 +152,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
             $milestone_data = null;
             
             if (!empty($proposal_id) && !empty($milestone_key_post)) {
+                echo '<script>console.log("Step 4: Checking for milestone payment...");</script>';
                 // Fetch proposal meta to get milestone details
                 $proposal_meta_check = get_post_meta($proposal_id, 'proposal_meta', true);
                 if (!empty($proposal_meta_check['milestone'][$milestone_key_post])) {
                     $milestone_data = $proposal_meta_check['milestone'][$milestone_key_post];
                     $is_milestone_payment = true;
+                    echo '<script>console.log("Step 4: Milestone Payment Detected", ' . json_encode($milestone_data) . ');</script>';
                 }
+            } else {
+                echo '<script>console.log("Step 4: Regular Project Payment (Non-Milestone)");</script>';
             }
             
             // Use appropriate API endpoint
@@ -122,13 +174,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                     'description' => $milestone_data['detail'] ?? ''
                 ]];
                 
-                error_log('MNT: Creating milestone escrow with data: ' . json_encode([
+                $api_payload = [
                     'merchant_id' => $merchant_id,
                     'client_id' => $client_id,
                     'project_id' => $escrow_project_id,
                     'milestone_key' => $milestone_key_post,
                     'milestones_array' => $milestones_array
-                ]));
+                ];
+                
+                echo '<script>console.log("Step 5: Calling Milestone Escrow API", ' . json_encode($api_payload) . ');</script>';
+                
+                error_log('MNT: Creating milestone escrow with data: ' . json_encode($api_payload));
                 
                 $escrow_result = \MNT\Api\Escrow::create_milestone_transaction(
                     (string)$merchant_id,
@@ -141,17 +197,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                 error_log('MNT: Milestone escrow result is_null: ' . (is_null($escrow_result) ? 'YES' : 'NO'));
                 error_log('MNT: Milestone escrow result is_array: ' . (is_array($escrow_result) ? 'YES' : 'NO'));
                 error_log('MNT: Milestone escrow result empty: ' . (empty($escrow_result) ? 'YES' : 'NO'));
+                
+                echo '<script>console.log("Step 6: Milestone Escrow API Response", ' . json_encode($escrow_result) . ');</script>';
             } else {
                 // Regular escrow transaction
+                $api_payload = [
+                    'merchant_id' => (string)$merchant_id,
+                    'client_id' => (string)$client_id,
+                    'project_id' => $escrow_project_id,
+                    'amount' => $amount
+                ];
+                
+                echo '<script>console.log("Step 5: Calling Regular Escrow API", ' . json_encode($api_payload) . ');</script>';
+                
                 // API signature: create($merchant_id, $client_id, $project_id, $amount, $auto_release)
                 error_log('MNT: Creating regular escrow - merchant_id: ' . $merchant_id . ', client_id: ' . $client_id . ', project_id: ' . $escrow_project_id . ', amount: ' . $amount);
                 $escrow_result = \MNT\Api\Escrow::create((string)$merchant_id, (string)$client_id, $escrow_project_id, $amount);
+                
+                echo '<script>console.log("Step 6: Regular Escrow API Response", ' . json_encode($escrow_result) . ');</script>';
             }
             
             // Check if escrow was created successfully
             $escrow_success = !empty($escrow_result['status']) || !empty($escrow_result['project_id']) || (isset($escrow_result['message']) && stripos($escrow_result['message'], 'success') !== false);
             
+            echo '<script>console.log("Step 7: Escrow Creation Status", {success: ' . ($escrow_success ? 'true' : 'false') . ', status: "' . ($escrow_result['status'] ?? 'unknown') . '"});</script>';
+            
             if ($escrow_success) {
+                echo '<script>console.log("Step 8: Escrow Created Successfully - Saving metadata...");</script>';
                 // Link escrow to project
                 $escrow_id = $escrow_result['escrow_id'] ?? 'API-' . $project_id;
                 update_post_meta($project_id, 'mnt_escrow_id', $escrow_id);
@@ -192,6 +264,64 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                 }
                 
                 $escrow_response = $escrow_result;
+                
+                // If escrow status is PENDING, automatically call release funds endpoint
+                $escrow_status = strtoupper($escrow_result['status'] ?? '');
+                if ($escrow_status === 'PENDING') {
+                    echo '<script>console.log("Step 9: Escrow Status is PENDING - Initiating automatic fund release...");</script>';
+                    error_log('MNT: Escrow created with PENDING status, calling release funds endpoint...');
+                    
+                    $release_payload = [
+                        'project_id' => $escrow_project_id,
+                        'client_id' => (string)$client_id,
+                        'merchant_id' => (string)$merchant_id
+                    ];
+                    
+                    echo '<script>console.log("Step 10: Calling Release Funds API", ' . json_encode($release_payload) . ');</script>';
+                    
+                    // Call the release funds endpoint (moves funds from wallet to escrow)
+                    $release_result = \MNT\Api\Escrow::client_release_funds(
+                        $escrow_project_id,
+                        (string)$client_id,
+                        (string)$merchant_id
+                    );
+                    
+                    error_log('MNT: Release funds result: ' . json_encode($release_result));
+                    
+                    echo '<script>console.log("Step 11: Release Funds API Response", ' . json_encode($release_result) . ');</script>';
+                    
+                    // Update escrow status if release was successful
+                    if (!empty($release_result['status'])) {
+                        echo '<script>console.log("Step 12: Funds Released Successfully - Updating status to: ' . ($release_result['status'] ?? 'unknown') . '");</script>';
+                        update_post_meta($project_id, 'mnt_escrow_status', $release_result['status']);
+                        $escrow_response['status'] = $release_result['status'];
+                        $escrow_response['released'] = true;
+                        
+                        // Update milestone escrow status if applicable
+                        if ($is_milestone_payment && !empty($milestone_key_post)) {
+                            $milestone_escrows = get_post_meta($project_id, 'mnt_milestone_escrows', true);
+                            if (!empty($milestone_escrows[$milestone_key_post])) {
+                                $milestone_escrows[$milestone_key_post]['status'] = $release_result['status'];
+                                update_post_meta($project_id, 'mnt_milestone_escrows', $milestone_escrows);
+                            }
+                        }
+                    } elseif (!empty($release_result['error']) || !empty($release_result['detail'])) {
+                        // Log release error but don't fail the entire transaction
+                        $release_error = $release_result['error'] ?? $release_result['detail'] ?? 'Unknown error';
+                        echo '<script>console.error("Step 12: Fund Release Failed", ' . json_encode(['error' => $release_error]) . ');</script>';
+                        error_log('MNT: Failed to release funds: ' . $release_error);
+                        $escrow_response['release_error'] = $release_error;
+                    }
+                } else {
+                    echo '<script>console.log("Step 9: Escrow Status is ' . $escrow_status . ' - No automatic fund release needed");</script>';
+                }
+                
+                // Set session/flag for success toast and redirect
+                $activity_url = Taskbot_Profile_Menu::taskbot_profile_menu_link('projects', $client_id, true, 'activity', $proposal_id);
+                $show_success_toast = true;
+                
+                echo '<script>console.log("Step 13: Escrow Process Complete - Preparing redirect", {activity_url: "' . esc_js($activity_url) . '"});</script>';
+                echo '<script>console.log("=== MNT ESCROW: Process Completed Successfully ===");</script>';
             } else {
                 // Show full error message and reason if available
                 $msg = '';
@@ -391,92 +521,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
         </div>
         <?php endif; ?>
 
-                <?php if ($escrow_response || (isset($escrow_result['detail']) && $escrow_result['detail'] === 'Project already exist.')): ?>
-                    <div class="tk-alert tk-alert-success">
-                        <?php if ($escrow_response): ?>
-                            <strong><?php esc_html_e('Escrow Created!', 'taskbot'); ?></strong><br>
-                            <?php if (!empty($escrow_response['escrow_id'])): ?>
-                                <strong><?php esc_html_e('Escrow ID:', 'taskbot'); ?></strong> <?php echo esc_html($escrow_response['escrow_id']); ?><br>
-                            <?php endif; ?>
-                            <strong><?php esc_html_e('Status:', 'taskbot'); ?></strong> <?php echo esc_html($escrow_response['status'] ?? ''); ?><br>
-                            <strong><?php esc_html_e('Amount:', 'taskbot'); ?></strong> ₦<?php echo esc_html($escrow_response['amount'] ?? ''); ?><br>
-                            <?php if (!empty($escrow_response['merchant_id'])): ?>
-                                <strong><?php esc_html_e('Merchant ID:', 'taskbot'); ?></strong> <?php echo esc_html($escrow_response['merchant_id'] ?? ''); ?><br>
-                            <?php endif; ?>
-                            <?php if (!empty($escrow_response['client_id'])): ?>
-                                <strong><?php esc_html_e('Client ID:', 'taskbot'); ?></strong> <?php echo esc_html($escrow_response['client_id'] ?? ''); ?><br>
-                            <?php endif; ?>
-                            <strong><?php esc_html_e('Project ID:', 'taskbot'); ?></strong> <?php echo esc_html($escrow_response['project_id'] ?? ''); ?><br>
-                            <?php if (!empty($escrow_response['message'])): ?>
-                                <br><strong><?php esc_html_e('Message:', 'taskbot'); ?></strong> <?php echo esc_html($escrow_response['message']); ?>
-                            <?php endif; ?>
-                            <details style="margin-top:12px;">
-                                <summary style="cursor:pointer;font-weight:600;"><?php esc_html_e('Show Raw API Response', 'taskbot'); ?></summary>
-                                <pre class="tk-code-block"><?php echo esc_html(print_r($escrow_response, true)); ?></pre>
-                            </details>
-                        <?php else: ?>
-                            <strong><?php esc_html_e('Escrow Already Exists for this Project.', 'taskbot'); ?></strong><br>
-                            <strong><?php esc_html_e('Project ID:', 'taskbot'); ?></strong> <?php echo esc_html($project_id); ?><br>
-                            <strong><?php esc_html_e('Merchant ID:', 'taskbot'); ?></strong> <?php echo esc_html($merchant_id); ?><br>
-                            <strong><?php esc_html_e('Client ID:', 'taskbot'); ?></strong> <?php echo esc_html($client_id); ?><br>
-                            <strong><?php esc_html_e('Amount:', 'taskbot'); ?></strong> ₦<?php echo esc_html($amount); ?><br>
-                            <br><strong><?php esc_html_e('Message:', 'taskbot'); ?></strong> <?php esc_html_e('Project already exists. You can move funds to escrow below.', 'taskbot'); ?>
-                            <details style="margin-top:12px;">
-                                <summary style="cursor:pointer;font-weight:600;"><?php esc_html_e('Show Raw API Response', 'taskbot'); ?></summary>
-                                <pre class="tk-code-block"><?php echo esc_html(print_r($escrow_result, true)); ?></pre>
-                            </details>
-                        <?php endif; ?>
-                    </div>
-
-                    <!-- Modal for Complete Escrow -->
-                    <?php 
-                    // Show modal if status is PENDING or if project already exists
-                    $show_modal = false;
-                    if (!empty($escrow_response['status']) && strtoupper($escrow_response['status']) === 'PENDING') {
-                        $show_modal = true;
-                    } elseif (isset($escrow_result['detail']) && $escrow_result['detail'] === 'Project already exist.') {
-                        $show_modal = true;
-                    }
-                    ?>
-                    <?php if ($show_modal): ?>
-                    <div class="modal fade tk-popup-modal show" id="mnt-complete-escrow-modal" tabindex="-1" aria-hidden="false" style="display:block !important;">
-                        <div class="modal-backdrop fade show" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1040;"></div>
-                        <div class="modal-dialog modal-dialog-centered" style="position:relative;z-index:1050;">
-                            <div class="modal-content">
-                                <div class="tk-popup_title">
-                                    <h5><?php esc_html_e('Release Funds to Escrow', 'taskbot'); ?></h5>
-                                    <a href="javascript:void(0);" class="close" onclick="jQuery('#mnt-complete-escrow-modal').hide(); jQuery('.modal-backdrop').remove();"><i class="tb-icon-x"></i></a>
-                                </div>
-                                <div class="modal-body tk-popup-content">
-                                    <?php if ($escrow_response): ?>
-                                        <p><?php esc_html_e('Escrow transaction created successfully with PENDING status. Click the button below to release funds from your wallet to the escrow account.', 'taskbot'); ?></p>
-                                    <?php else: ?>
-                                        <p><?php esc_html_e('An escrow transaction already exists for this project but funds have not been released yet. Click the button below to release funds from your wallet to the escrow account.', 'taskbot'); ?></p>
-                                    <?php endif; ?>
-                                    <button id="mnt-complete-escrow-btn" class="tk-btn-solid-lg" 
-                                            data-project-id="<?php echo esc_attr($escrow_response['project_id'] ?? $project_id ?? ''); ?>" 
-                                            data-user-id="<?php echo esc_attr(isset($escrow_response['client_id']) ? $escrow_response['client_id'] : (isset($client_id) ? $client_id : '')); ?>"
-                                            data-seller-id="<?php echo esc_attr(isset($escrow_response['merchant_id']) ? $escrow_response['merchant_id'] : (isset($merchant_id) ? $merchant_id : '')); ?>">
-                                        <?php esc_html_e('Release Funds', 'taskbot'); ?>
-                                    </button>
-                                    <div id="mnt-complete-escrow-message" class="tk-alert" style="margin-top:16px;display:none;"></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <?php endif; ?>
-
-                    <!-- Manually include jQuery, mntEscrow object, and mnt-complete-escrow.js -->
-                    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-                    <script>
-                    var mntEscrow = {
-                        ajaxUrl: '<?php echo admin_url('admin-ajax.php'); ?>',
-                        nonce: '<?php echo wp_create_nonce('mnt_nonce'); ?>'
-                    };
-                    </script>
-                    <script src="<?php echo plugins_url('assets/js/mnt-complete-escrow.js', dirname(__FILE__)); ?>?v=debug"></script>
-
-                <?php elseif ($escrow_error): ?>
+                <?php if ($escrow_error): ?>
                     <div class="tk-alert tk-alert-error">
                         <?php echo $escrow_error; ?>
                         <?php if (isset($escrow_result)): ?>
@@ -490,6 +535,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
 
         <div class="row">
             <div class="col-12">
+                <?php if ($is_already_hired): ?>
+                    <!-- Project Already Hired - Show Status -->
+                    <div class="tk-alert" style="background: #e0f2fe; border-left: 4px solid #0284c7; color: #075985; padding: 20px; margin-bottom: 20px;">
+                        <div style="display: flex; align-items: center; gap: 15px;">
+                            <div style="font-size: 48px;">✓</div>
+                            <div>
+                                <h3 style="margin: 0 0 8px 0; color: #075985; font-size: 20px; font-weight: 700;">
+                                    <?php esc_html_e('Project Already Hired', 'taskbot'); ?>
+                                </h3>
+                                <p style="margin: 0; font-size: 16px;">
+                                    <?php esc_html_e('This project has already been hired and escrow has been created. You cannot create another escrow for this project.', 'taskbot'); ?>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="tb-dhbbtn-holder" style="border-top: none; padding-top: 0; margin-top: 0;">
+                        <div class="tb-btn tb-greenbtn" style="opacity: 0.6; cursor: not-allowed; background: #6b7280;">
+                            <i class="tb-icon-check"></i> <?php esc_html_e('Hired', 'taskbot'); ?>
+                        </div>
+                        <?php
+                        $projects_page_url = Taskbot_Profile_Menu::taskbot_profile_menu_link('projects', $client_id, true, 'listing');
+                        ?>
+                        <a href="<?php echo esc_url($projects_page_url); ?>" class="tb-btn tb-btn-outline">
+                            <i class="tb-icon-arrow-left"></i> <?php esc_html_e('Go Back', 'taskbot'); ?>
+                        </a>
+                    </div>
+                <?php else: ?>
                 <form method="post" class="tb-themeform">
                     <?php wp_nonce_field('create_escrow', 'create_escrow_nonce'); ?>
                     <input type="hidden" name="project_id" value="<?php echo esc_attr($project_id); ?>">
@@ -509,13 +582,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                                 <button type="submit" class="tb-btn tb-greenbtn">
                                     <i class="tb-icon-lock"></i> <?php echo $is_milestone && !empty($milestone_key) ? esc_html__('Pay & Escrow Milestone', 'taskbot') : esc_html__('Create Escrow & Hire Seller', 'taskbot'); ?>
                                 </button>
-                                <a href="javascript:history.back()" class="tb-btn tb-btn-outline">
+                                <?php
+                                $projects_page_url = Taskbot_Profile_Menu::taskbot_profile_menu_link('projects', $client_id, true, 'listing');
+                                ?>
+                                <a href="<?php echo esc_url($projects_page_url); ?>" class="tb-btn tb-btn-outline">
                                     <i class="tb-icon-arrow-left"></i> <?php esc_html_e('Go Back', 'taskbot'); ?>
                                 </a>
                             </div>
                         </div>
                     </fieldset>
                 </form>
+                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -801,4 +878,97 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
         padding: 20px 15px;
     }
 }
+
+/* Success Toast Notification */
+.mnt-toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: white;
+    padding: 20px 24px;
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(16, 185, 129, 0.4);
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    animation: slideInRight 0.4s ease-out;
+    min-width: 320px;
+    max-width: 500px;
+}
+
+.mnt-toast-icon {
+    font-size: 28px;
+    background: rgba(255, 255, 255, 0.2);
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.mnt-toast-content {
+    flex: 1;
+}
+
+.mnt-toast-title {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.mnt-toast-message {
+    font-size: 14px;
+    opacity: 0.95;
+    line-height: 1.4;
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(400px);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@media (max-width: 768px) {
+    .mnt-toast {
+        top: 10px;
+        right: 10px;
+        left: 10px;
+        min-width: auto;
+    }
+}
 </style>
+
+<?php if (!empty($show_success_toast) && !empty($activity_url)): ?>
+<div class="mnt-toast">
+    <div class="mnt-toast-icon">
+        ✓
+    </div>
+    <div class="mnt-toast-content">
+        <div class="mnt-toast-title">Escrow Created Successfully!</div>
+        <div class="mnt-toast-message">
+            <?php if ($is_milestone && !empty($milestone_key)): ?>
+                Milestone payment secured. Redirecting to project activity...
+            <?php else: ?>
+                Project hired successfully. Redirecting to invoice page...
+            <?php endif; ?>
+        </div>
+    </div>
+</div>
+<script>
+(function() {
+    // Redirect after 2.5 seconds to show the toast
+    setTimeout(function() {
+        window.location.href = '<?php echo esc_js($activity_url); ?>';
+    }, 2500);
+})();
+</script>
+<?php endif; ?>
