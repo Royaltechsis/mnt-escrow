@@ -727,13 +727,22 @@
      * Intercepts "Complete without review" and "Complete contract" buttons
      * Calls client_release_funds API to release funds from escrow to seller wallet
      */
-    $(document).on('click', '.tb_complete_project, .tb_rating_project', function(e) {
+    $(document).on('click.mnt', '.tb_complete_project, .tb_rating_project', function(e) {
+        console.log('MNT: Complete button clicked - handler triggered!');
+        console.log('MNT: Target element:', this);
+        console.log('MNT: Element classes:', $(this).attr('class'));
+        
         var $btn = $(this);
         var proposalId = $btn.data('proposal_id');
         var userId = $btn.data('user_id');
         
+        console.log('MNT: Initial data - proposalId:', proposalId, 'userId:', userId);
+        
         // Check if this is a milestone project - if so, let default handler take over
         var isMilestoneProject = $btn.closest('.tb-completetask').find('.tb_update_milestone').length > 0;
+        
+        console.log('MNT: Is milestone project?', isMilestoneProject);
+        console.log('MNT: Milestone elements found:', $btn.closest('.tb-completetask').find('.tb_update_milestone').length);
         
         if (isMilestoneProject) {
             console.log('MNT: Milestone project detected, using default handler');
@@ -743,6 +752,7 @@
         e.preventDefault();
         e.stopImmediatePropagation();
         
+        console.log('MNT: Event prevented, continuing with MNT handler');
         console.log('MNT: Intercepting complete contract button', {
             proposalId: proposalId,
             userId: userId,
@@ -900,9 +910,18 @@
                             return;
                         }
                     } else {
-                        // "Complete without review" - just show success and reload
-                        alert(response.data.message || 'Contract completed! Funds released to seller wallet.');
-                        location.reload();
+                        // "Complete without review" - show success, then trigger taskbot's complete modal
+                        alert(response.data.message || 'Funds released to seller wallet successfully!');
+                        
+                        // Re-enable button and restore text
+                        $btn.prop('disabled', false).text(originalText);
+                        
+                        // Remove our event handler temporarily to let taskbot handle it
+                        $btn.off('click.mnt');
+                        
+                        // Trigger the taskbot complete workflow
+                        // This will show the taskbot confirm complete modal
+                        $btn.trigger('click');
                     }
                 } else {
                     // Enhanced error handling

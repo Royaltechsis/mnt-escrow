@@ -43,7 +43,161 @@ class Init {
         // Helper to get seller ID from proposal
         add_action('wp_ajax_mnt_get_seller_from_proposal', [__CLASS__, 'handle_get_seller_from_proposal_ajax']);
         add_action('wp_ajax_nopriv_mnt_get_seller_from_proposal', [__CLASS__, 'handle_get_seller_from_proposal_ajax']);
+        
+        // Create order before escrow page load
+        add_action('wp_ajax_mnt_create_order_before_escrow', [__CLASS__, 'handle_create_order_before_escrow_ajax']);
+        add_action('wp_ajax_nopriv_mnt_create_order_before_escrow', [__CLASS__, 'handle_create_order_before_escrow_ajax']);
+        // Admin backfill endpoint to repair draft task orders
+        add_action('wp_ajax_mnt_backfill_task_orders', [__CLASS__, 'handle_mnt_backfill_task_orders_ajax']);
+        // Admin repair single order endpoint
+        add_action('wp_ajax_mnt_admin_repair_order', [__CLASS__, 'handle_mnt_admin_repair_order_ajax']);
 
+    }
+
+    /**
+     * Get seller task orders (IDs) used by Taskbot dashboard
+     *
+     * @param int $seller_id
+     * @param string $order_type Optional: _task_status filter (e.g., 'hired')
+     * @return array Array of order IDs
+     */
+    public static function mnt_get_seller_task_orders($seller_id = 0, $order_type = 'any') {
+        $seller_id = intval($seller_id);
+        if (!$seller_id) {
+            return [];
+        }
+
+        // Show orders regardless of their post_status to avoid missing items due to timing issues
+        $order_status = null; // use 'any' in WP_Query below when null
+
+        $meta_query = [
+            'relation' => 'AND',
+            [ 'key' => 'payment_type', 'value' => 'tasks', 'compare' => '=' ],
+            [ 'key' => 'seller_id', 'value' => $seller_id, 'compare' => '=' ],
+        ];
+
+        if (!empty($order_type) && $order_type !== 'any') {
+            $meta_query[] = [ 'key' => '_task_status', 'value' => $order_type, 'compare' => '=' ];
+        }
+
+            $args = [
+                'posts_per_page' => -1,
+                'post_type'      => 'shop_order',
+                'post_status'    => 'any',
+                'fields'         => 'ids',
+                'meta_query'     => $meta_query,
+                'orderby'        => 'date',
+                'order'          => 'DESC',
+            ];
+
+        $q = new \WP_Query($args);
+        if (!empty($q->posts)) {
+            return $q->posts;
+        }
+
+        // Fallback: WP_Query returned nothing but meta rows exist (edge-case with INNER JOIN)
+        global $wpdb;
+            $found = $wpdb->get_col( $wpdb->prepare(
+                "SELECT pm1.post_id FROM {$wpdb->postmeta} pm1 JOIN {$wpdb->postmeta} pm2 ON pm1.post_id = pm2.post_id JOIN {$wpdb->posts} p ON p.ID = pm1.post_id WHERE pm1.meta_key = %s AND pm1.meta_value = %s AND pm2.meta_key = %s AND pm2.meta_value = %s ORDER BY p.post_date DESC",
+                'payment_type', 'tasks', 'seller_id', $seller_id
+            ) );
+
+        // Return found IDs (no post_status filtering) so UI can show orders regardless of lifecycle state.
+        return is_array($found) ? $found : [];
+    }
+
+    /**
+     * Get buyer task orders (IDs) used by Taskbot dashboard
+     *
+     * @param int $buyer_id
+     * @param string $order_type Optional: _task_status filter (e.g., 'hired')
+     * @return array Array of order IDs
+     */
+    public static function mnt_get_buyer_task_orders($buyer_id = 0, $order_type = 'any') {
+        $buyer_id = intval($buyer_id);
+        if (!$buyer_id) {
+            return [];
+        }
+
+        // Show orders regardless of their post_status to avoid missing items due to timing issues
+        $order_status = null; // use 'any' in WP_Query below when null
+
+        $meta_query = [
+            'relation' => 'AND',
+            [ 'key' => 'payment_type', 'value' => 'tasks', 'compare' => '=' ],
+            [ 'key' => 'buyer_id', 'value' => $buyer_id, 'compare' => '=' ],
+        ];
+
+        if (!empty($order_type) && $order_type !== 'any') {
+            $meta_query[] = [ 'key' => '_task_status', 'value' => $order_type, 'compare' => '=' ];
+        }
+
+            $args = [
+                'posts_per_page' => -1,
+                'post_type'      => 'shop_order',
+                'post_status'    => 'any',
+                'fields'         => 'ids',
+                'meta_query'     => $meta_query,
+                'orderby'        => 'date',
+                'order'          => 'DESC',
+            ];
+
+        $q = new \WP_Query($args);
+        if (!empty($q->posts)) {
+            return $q->posts;
+        }
+
+        // Fallback: WP_Query returned nothing but meta rows exist (edge-case with INNER JOIN)
+        global $wpdb;
+            $found = $wpdb->get_col( $wpdb->prepare(
+                "SELECT pm1.post_id FROM {$wpdb->postmeta} pm1 JOIN {$wpdb->postmeta} pm2 ON pm1.post_id = pm2.post_id JOIN {$wpdb->posts} p ON p.ID = pm1.post_id WHERE pm1.meta_key = %s AND pm1.meta_value = %s AND pm2.meta_key = %s AND pm2.meta_value = %s ORDER BY p.post_date DESC",
+                'payment_type', 'tasks', 'buyer_id', $buyer_id
+            ) );
+
+        // Return found IDs (no post_status filtering) so UI can show orders regardless of lifecycle state.
+        return is_array($found) ? $found : [];
+    }
+    
+    /**
+     * Enqueue plugin scripts and styles
+     */
+    public static function enqueue_scripts() {
+        // Enqueue main styles
+        wp_enqueue_style(
+            'mnt-escrow-style',
+            MNT_ESCROW_URL . 'assets/css/style.css',
+            [],
+            MNT_ESCROW_VERSION
+        );
+        
+        // Enqueue main escrow JavaScript
+        wp_enqueue_script(
+            'mnt-escrow-js',
+            MNT_ESCROW_URL . 'assets/js/escrow.js',
+            ['jquery'],
+            MNT_ESCROW_VERSION,
+            true
+        );
+        
+        // Enqueue complete escrow JavaScript
+        wp_enqueue_script(
+            'mnt-complete-escrow-js',
+            MNT_ESCROW_URL . 'assets/js/mnt-complete-escrow.js',
+            ['jquery'],
+            MNT_ESCROW_VERSION,
+            true
+        );
+        
+        // Localize script with AJAX URL and nonce
+        wp_localize_script('mnt-complete-escrow-js', 'mntEscrow', [
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('mnt_nonce')
+        ]);
+        
+        wp_localize_script('mnt-escrow-js', 'mntEscrow', [
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('mnt_nonce')
+        ]);
     }
 
     /**
@@ -381,10 +535,23 @@ class Init {
         check_ajax_referer('mnt_nonce', 'nonce');
         
         $project_id = isset($_POST['project_id']) ? sanitize_text_field($_POST['project_id']) : '';
+        $task_id = isset($_POST['task_id']) ? intval($_POST['task_id']) : 0;
+        $order_id = isset($_POST['order_id']) ? intval($_POST['order_id']) : 0;
         $user_id = isset($_POST['user_id']) ? intval($_POST['user_id']) : 0;
         $seller_id_from_ajax = isset($_POST['seller_id']) ? intval($_POST['seller_id']) : 0;
         
-        error_log('MNT Fund Escrow - Received: project_id=' . $project_id . ', user_id=' . $user_id . ', seller_id=' . $seller_id_from_ajax);
+        error_log('');
+        error_log('╔════════════════════════════════════════════════════════════════╗');
+        error_log('║  MNT FUND ESCROW AJAX HANDLER CALLED                          ║');
+        error_log('╚════════════════════════════════════════════════════════════════╝');
+        error_log('');
+        error_log('📥 RECEIVED DATA:');
+        error_log('  project_id: ' . $project_id);
+        error_log('  task_id: ' . $task_id);
+        error_log('  order_id: ' . $order_id);
+        error_log('  user_id (client): ' . $user_id);
+        error_log('  seller_id: ' . $seller_id_from_ajax);
+        error_log('');
         
         if (empty($project_id) || empty($user_id)) {
             error_log('MNT Fund Escrow - ERROR: Missing project_id or user_id');
@@ -392,23 +559,49 @@ class Init {
             return;
         }
         
-        // Prioritize seller_id from AJAX, then try post meta, then fallback methods
-        $seller_id = $seller_id_from_ajax;
+        error_log('=== MNT Fund Escrow - Determining Seller ID ===');
+        error_log('seller_id_from_ajax: ' . ($seller_id_from_ajax ?: 'EMPTY'));
+        error_log('seller_id_from_ajax (int value): ' . intval($seller_id_from_ajax));
+        error_log('seller_id_from_ajax is_numeric: ' . (is_numeric($seller_id_from_ajax) ? 'YES' : 'NO'));
         
-        if (empty($seller_id)) {
-            // Get seller ID from post meta
-            $seller_id = get_post_meta($project_id, 'mnt_escrow_seller', true);
+        // Use seller_id from AJAX if provided (it should always be provided now)
+        $seller_id = intval($seller_id_from_ajax);
+        error_log('After intval conversion - seller_id: ' . $seller_id);
+        
+        // Fallback: Try to get seller ID from task_id if AJAX didn't provide it
+        if ($seller_id <= 0 && $task_id > 0) {
+            error_log('seller_id from AJAX is empty or zero, trying fallbacks with task_id: ' . $task_id);
+            
+            // First try meta
+            $seller_id = get_post_meta($task_id, 'mnt_escrow_seller', true);
+            error_log('  [1] From task meta (mnt_escrow_seller): ' . ($seller_id ?: 'EMPTY'));
+            
+            // Then try task author
+            if (!$seller_id) {
+                $task = get_post($task_id);
+                if ($task) {
+                    $seller_id = $task->post_author;
+                    error_log('  [2] From task author (post_author): ' . ($seller_id ?: 'EMPTY'));
+                } else {
+                    error_log('  [2] Task post not found');
+                }
+            }
         }
         
-        error_log('=== MNT Fund Escrow - Initial Data ===');
-        error_log('project_id: ' . $project_id);
-        error_log('user_id (client_id): ' . $user_id);
-        error_log('seller_id from AJAX: ' . ($seller_id_from_ajax ? $seller_id_from_ajax : 'EMPTY'));
-        error_log('seller_id from post meta: ' . (get_post_meta($project_id, 'mnt_escrow_seller', true) ?: 'EMPTY'));
-        error_log('seller_id being used: ' . ($seller_id ? $seller_id : 'EMPTY'));
-        error_log('seller_id type: ' . gettype($seller_id));
+        // Final check
+        if (!$seller_id || intval($seller_id) <= 0) {
+            error_log('❌ CRITICAL: seller_id is still empty or invalid!');
+            error_log('Final seller_id value: ' . ($seller_id ?: 'EMPTY/NULL') . ' (type: ' . gettype($seller_id) . ')');
+            error_log('Final seller_id intval: ' . intval($seller_id));
+            error_log('seller_id_from_ajax value: ' . $seller_id_from_ajax . ' (type: ' . gettype($seller_id_from_ajax) . ')');
+            error_log('task_id value: ' . $task_id);
+            error_log('project_id value: ' . $project_id);
+            
+            wp_send_json_error(['message' => '<strong>Missing Seller ID</strong><br><br>Cannot fund escrow without seller information.<br>Project ID: ' . $project_id]);
+            return;
+        }
         
-        // If seller_id is not found, try to get it from proposal
+        error_log('✅ Seller ID successfully determined: ' . $seller_id);
         if (empty($seller_id)) {
             error_log('MNT Fund Escrow - seller_id not in post meta, checking proposal...');
             
@@ -511,153 +704,316 @@ class Init {
             return;
         }
         
-        // Get merchant/seller ID from meta
-        $seller_id = get_post_meta($project_id, 'mnt_escrow_seller', true);
+        // NOTE: seller_id was already determined in the section above
+        // Do NOT re-query from meta as it will override the correctly determined value
+        // Only proceed if seller_id is valid
         
         error_log('=== MNT Fund Escrow - Preparing API Call ===');
         error_log('project_id: ' . $project_id . ' (type: ' . gettype($project_id) . ')');
         error_log('client_id (user_id): ' . $user_id . ' (type: ' . gettype($user_id) . ')');
         error_log('merchant_id (seller_id): ' . $seller_id . ' (type: ' . gettype($seller_id) . ')');
-        error_log('seller_id is_empty: ' . (empty($seller_id) ? 'YES' : 'NO'));
+        error_log('seller_id is_numeric: ' . (is_numeric($seller_id) ? 'YES' : 'NO'));
         
-        if (!$seller_id) {
-            error_log('MNT Fund Escrow - ERROR: seller_id is empty!');
+        if (!$seller_id || intval($seller_id) <= 0) {
+            error_log('MNT Fund Escrow - SECOND CHECK FAILED: seller_id is empty or invalid!');
+            error_log('seller_id value: ' . ($seller_id ?: 'EMPTY') . ' (intval: ' . intval($seller_id) . ')');
             wp_send_json_error(['message' => '<strong>Missing Seller ID</strong><br><br>Cannot fund escrow without seller information.<br>Project ID: ' . $project_id]);
             return;
         }
         
         // Call the client_release_funds API endpoint
         // This moves money: Client Wallet → Escrow Account (pending → funded)
-        error_log('MNT Fund Escrow - Calling client_release_funds($project_id, $user_id, $seller_id)');
+        error_log('');
+        error_log('🌐 CALLING API ENDPOINT:');
+        error_log('  Endpoint: POST /escrow/client_release_funds (base: https://escrow-api-dfl6.onrender.com/api)');
+        error_log('  Full URL: https://escrow-api-dfl6.onrender.com/api/escrow/client_release_funds');
+        error_log('');
+        error_log('📦 API PAYLOAD:');
+        error_log('  {');
+        error_log('    "project_id": "' . $project_id . '",');
+        error_log('    "client_id": "' . $user_id . '",');
+        error_log('    "merchant_id": "' . $seller_id . '"');
+        error_log('  }');
+        error_log('');
+        error_log('Calling Escrow::client_release_funds()...');
+        
         $result = \MNT\Api\Escrow::client_release_funds($project_id, $user_id, $seller_id);
         
-        error_log('MNT Fund Escrow - API Response: ' . json_encode($result));
+        error_log('');
+        error_log('📨 API RESPONSE:');
+        error_log(json_encode($result, JSON_PRETTY_PRINT));
         
-        if ($result && !isset($result['error']) && !isset($result['detail'])) {
-            // Update task/project meta to reflect funded status
-            update_post_meta($project_id, 'mnt_escrow_status', 'funded');
-            update_post_meta($project_id, 'mnt_escrow_funded_at', current_time('mysql'));
-            
-            // Trigger task purchase - update task status to "hired"
-            error_log('MNT Fund Escrow - Triggering task purchase for task ' . $project_id);
-            
-            // Update task status to hired
-            update_post_meta($project_id, '_post_project_status', 'hired');
-            update_post_meta($project_id, '_hired_status', 'hired');
-            wp_update_post([
-                'ID' => $project_id,
-                'post_status' => 'hired'
-            ]);
-            
-            // Create WooCommerce order for the task purchase
-            $order_id = null;
-            $order_url = '';
-            
-            if (class_exists('WooCommerce') && $seller_id) {
-                try {
-                    $order = wc_create_order(['customer_id' => $user_id]);
-                    
-                    if (!is_wp_error($order)) {
-                        // Get task/product details
-                        $task_post = get_post($project_id);
-                        $task_title = $task_post ? $task_post->post_title : 'Task #' . $project_id;
-                        $escrow_amount = get_post_meta($project_id, 'mnt_escrow_amount', true);
-                        
-                        // Add custom line item for the task
-                        $item = new WC_Order_Item_Product();
-                        $item->set_name($task_title);
-                        $item->set_quantity(1);
-                        $item->set_subtotal($escrow_amount);
-                        $item->set_total($escrow_amount);
-                        $order->add_item($item);
-                        
-                        // Store escrow metadata
-                        $order->add_meta_data('mnt_escrow_id', get_post_meta($project_id, 'mnt_escrow_id', true));
-                        $order->add_meta_data('project_id', $project_id);
-                        $order->add_meta_data('task_product_id', $project_id);
-                        $order->add_meta_data('seller_id', $seller_id);
-                        $order->add_meta_data('buyer_id', $user_id);
-                        $order->add_meta_data('_task_status', 'hired');
-                        $order->add_meta_data('payment_type', 'escrow');
-                        $order->add_meta_data('escrow_funded', 'yes');
-                        
-                        // Add Taskbot-compatible invoice data
-                        $invoice_data = [
-                            'project_id' => $project_id,
-                            'project_type' => 'fixed',
-                            'seller_shares' => $escrow_amount,
-                            'payment_method' => 'escrow',
-                            'escrow_id' => get_post_meta($project_id, 'mnt_escrow_id', true),
-                            'funded_at' => current_time('mysql')
-                        ];
-                        $order->add_meta_data('cus_woo_product_data', $invoice_data);
-                        
-                        $order->set_total($escrow_amount);
-                        $order->set_status('completed'); // Mark as completed since it's paid via escrow
-                        $order->save();
-                        
-                        $order_id = $order->get_id();
-                        $order_url = $order->get_view_order_url();
-                        
-                        // Link order to task
-                        update_post_meta($project_id, 'mnt_wc_order_id', $order_id);
-                        
-                        error_log('MNT Fund Escrow - WooCommerce order created: ' . $order_id);
-                    } else {
-                        error_log('MNT Fund Escrow - WooCommerce order creation failed: ' . $order->get_error_message());
+ if ($result && !isset($result['error']) && !isset($result['detail'])) {
+    try {
+        error_log('MNT Fund Escrow - SUCCESS: Funds released, beginning post-processing');
+
+        // Get the WooCommerce order
+        $wc_order_id = $order_id ?: get_post_meta($task_id, 'mnt_last_order_id', true);
+
+        update_post_meta($task_id, 'mnt_escrow_status', 'funded');
+        update_post_meta($task_id, 'mnt_escrow_funded_at', current_time('mysql'));
+        update_post_meta($task_id, 'mnt_wc_order_id', $wc_order_id);
+
+        if ($wc_order_id) {
+            // Set required Taskbot order meta
+            update_post_meta($wc_order_id, 'payment_type', 'tasks');
+            update_post_meta($wc_order_id, '_task_id', $task_id);
+            update_post_meta($wc_order_id, '_mnt_task_id', $task_id); // Always save as _mnt_task_id for robust lookup
+            update_post_meta($wc_order_id, 'buyer_id', $user_id);
+            update_post_meta($wc_order_id, 'seller_id', $seller_id);
+
+
+        // After escrow is funded, update Taskbot task status
+            if (isset($result['status']) && $result['status'] === 'FUNDED' && isset($result['project_id'])) {
+                global $wpdb;
+                // Find the order (shop_order post type) that has this escrow project ID
+                $found_order_id = $wpdb->get_var( $wpdb->prepare( 
+                    "SELECT pm.post_id FROM {$wpdb->postmeta} pm JOIN {$wpdb->posts} p ON pm.post_id = p.ID WHERE pm.meta_key = %s AND pm.meta_value = %s AND p.post_type = %s LIMIT 1", 
+                    'mnt_escrow_project_id', $result['project_id'], 'shop_order' 
+                ) );
+                // Try to find task ID via multiple fallbacks
+                $task_id = $found_order_id ? get_post_meta($found_order_id, '_mnt_task_id', true) : null;
+                if (empty($task_id) && $found_order_id) {
+                    $task_id = get_post_meta($found_order_id, '_task_id', true);
+                }
+                if (empty($task_id) && $found_order_id) {
+                    $task_id = get_post_meta($found_order_id, 'task_product_id', true);
+                }
+                if (empty($task_id) && $found_order_id) {
+                    // Try to read the invoice meta which may contain project_id
+                    $invoice_meta = get_post_meta($found_order_id, 'cus_woo_product_data', true);
+                    if (!empty($invoice_meta) && is_array($invoice_meta) && isset($invoice_meta['project_id'])) {
+                        $task_id = $invoice_meta['project_id'];
                     }
-                } catch (Exception $e) {
-                    error_log('MNT Fund Escrow - Exception creating WC order: ' . $e->getMessage());
+                }
+
+                // Additional fallbacks: attempt to find task via task meta stored elsewhere
+                if (empty($task_id) && $found_order_id) {
+                    // 1) Try mnt_last_order_id stored on task post meta
+                    $task_id = $wpdb->get_var( $wpdb->prepare( "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = %s AND meta_value = %s LIMIT 1", 'mnt_last_order_id', $found_order_id ) );
+                    if ($task_id) {
+                        error_log("MNT: Found task via mnt_last_order_id lookup: " . $task_id . " for order " . $found_order_id);
+                    }
+                }
+
+                if (empty($task_id) && isset($result['project_id'])) {
+                    // 2) Try mnt_escrow_project_id stored on task post meta (matches API project id like 'order-7190')
+                    $task_id = $wpdb->get_var( $wpdb->prepare( "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = %s AND meta_value = %s LIMIT 1", 'mnt_escrow_project_id', $result['project_id'] ) );
+                    if ($task_id) {
+                        error_log("MNT: Found task via mnt_escrow_project_id lookup: " . $task_id . " for project " . $result['project_id']);
+                    }
+                }
+                if (empty($task_id) && $found_order_id && class_exists('WC_Order')) {
+                    $wc_order_for_items = wc_get_order($found_order_id);
+                    if ($wc_order_for_items) {
+                        foreach ($wc_order_for_items->get_items() as $item) {
+                            if (method_exists($item, 'get_product_id')) {
+                                $possible = $item->get_product_id();
+                            } elseif (isset($item['product_id'])) {
+                                $possible = $item['product_id'];
+                            } else {
+                                $possible = null;
+                            }
+                            if (!empty($possible)) {
+                                $task_id = $possible;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if ($task_id) {
+                    // backfill meta for future lookups
+                    $backfill_target = !empty($found_order_id) ? $found_order_id : $wc_order_id;
+                    if (!empty($backfill_target) && empty(get_post_meta($backfill_target, '_mnt_task_id', true))) {
+                        update_post_meta($backfill_target, '_mnt_task_id', $task_id);
+                        error_log("MNT: Backfilled _mnt_task_id for order $backfill_target with task $task_id");
+                    }
+                    // Skip if the task is already hired
+                    $existing_status = get_post_meta($task_id, '_task_status', true);
+                    if ($existing_status !== 'hired') {
+                        self::mnt_update_task_status_on_escrow_funded($task_id);
+                    } else {
+                        error_log("MNT: Task $task_id already hired; skipping update.");
+                    }
+                } else {
+                    // Log helpful order meta for debugging missing task_id
+                    $order_meta_debug_keys = ['_mnt_task_id', '_task_id', 'task_product_id', 'payment_type', 'cus_woo_product_data', 'mnt_escrow_project_id'];
+                    $meta_debug = [];
+                    foreach ($order_meta_debug_keys as $k) {
+                        $meta_debug[$k] = get_post_meta($found_order_id ?: $wc_order_id, $k, true);
+                    }
+                    error_log('MNT: No Task ID linked to order ' . ($found_order_id ?: $wc_order_id) . ' — meta snapshot: ' . json_encode($meta_debug));
                 }
             }
-            
-            $success_msg = '<strong>Escrow Funded & Task Purchased!</strong><br><br>';
-            $success_msg .= 'Funds have been moved from your wallet to the escrow account.<br><br>';
-            $success_msg .= '<strong>Status:</strong> FUNDED & HIRED<br>';
-            if ($order_id) {
-                $success_msg .= '<strong>Order ID:</strong> #' . $order_id . '<br>';
-                if ($order_url) {
-                    $success_msg .= '<a href="' . esc_url($order_url) . '" target="_blank" style="color:#3b82f6;text-decoration:underline;">View Order Details</a>';
+            $order = wc_get_order($wc_order_id);
+            if ($order) {
+                // Force WooCommerce to perform its internal updates and sync postmeta relationships
+                try {
+                    $order->update_status('processing', 'Escrow funded - intermediate update by MNT', true);
+                } catch (\Exception $e) {
+                    error_log('MNT: Failed to update order status via update_status(): ' . $e->getMessage());
+                    // Fallback to set_status/save
+                    $order->set_status('processing');
+                    $order->save();
                 }
+                // Refresh caches
+                clean_post_cache($order->get_id());
+                wp_cache_delete($order->get_id(), 'post_meta');
             }
-            
-            // Get redirect URL for ongoing tasks (buyer insights page)
-            $redirect_url = '';
-            if (class_exists('Taskbot_Profile_Menu')) {
-                $redirect_url = Taskbot_Profile_Menu::taskbot_profile_menu_link('earnings', $user_id, true, 'insights');
-            }
-            
-            wp_send_json_success([
-                'message' => $success_msg,
-                'result' => $result,
-                'order_id' => $order_id,
-                'task_hired' => true,
-                'redirect_url' => $redirect_url
-            ]);
-        } else {
-            $error_msg = isset($result['detail']) ? $result['detail'] : (isset($result['error']) ? $result['error'] : (isset($result['message']) ? $result['message'] : 'Failed to fund escrow.'));
-            
-            error_log('MNT Fund Escrow - ERROR: ' . $error_msg);
-            error_log('MNT Fund Escrow - Full API Response: ' . print_r($result, true));
-            
-            // Build detailed error message
-            $detailed_error = '<strong>Failed to fund escrow:</strong><br><br>';
-            $detailed_error .= '<strong>API Error:</strong> ' . esc_html($error_msg) . '<br><br>';
-            
-            // Add full API response for debugging
-            if (!empty($result)) {
-                $detailed_error .= '<strong>Full API Response:</strong><br>';
-                $detailed_error .= '<pre style="background: #1f2937; color: #f3f4f6; padding: 10px; border-radius: 4px; overflow: auto; max-height: 300px; font-size: 11px;">';
-                $detailed_error .= esc_html(print_r($result, true));
-                $detailed_error .= '</pre>';
-            }
-            
-            wp_send_json_error([
-                'message' => $detailed_error,
-                'result' => $result
-            ]);
         }
+
+        // Determine which order to complete (prefer found order if lookup succeeded)
+        $complete_order_id = !empty($found_order_id) ? $found_order_id : $wc_order_id;
+        if ($complete_order_id) {
+            // First, force WooCommerce to update order status so internal joins are rebuilt
+            $complete_order = wc_get_order($complete_order_id);
+            if ($complete_order) {
+                try {
+                    $complete_order->update_status('processing', 'Escrow funded - finalized by MNT', true);
+                } catch (\Exception $e) {
+                    error_log('MNT: Failed to update complete order status via update_status(): ' . $e->getMessage());
+                    $complete_order->set_status('processing');
+                    $complete_order->save();
+                }
+                // Refresh caches so subsequent WP_Query sees the fresh status/meta
+                clean_post_cache($complete_order_id);
+                wp_cache_delete($complete_order_id, 'post_meta');
+            }
+
+            // Ensure required order meta is set on the actual order Taskbot will process
+            // (Do this AFTER the status update so WP/WC meta joins include this order)
+            update_post_meta($complete_order_id, 'payment_type', 'tasks');
+            update_post_meta($complete_order_id, '_task_id', $task_id);
+            update_post_meta($complete_order_id, '_mnt_task_id', $task_id);
+            // Ensure Task product reference exists for dashboard listings
+            if (empty(get_post_meta($complete_order_id, 'task_product_id', true))) {
+                update_post_meta($complete_order_id, 'task_product_id', $task_id);
+            }
+            if (empty(get_post_meta($complete_order_id, '_product_id', true))) {
+                update_post_meta($complete_order_id, '_product_id', $task_id);
+            }
+            if (empty(get_post_meta($complete_order_id, '_product_title', true))) {
+                $task_title = get_the_title($task_id);
+                update_post_meta($complete_order_id, '_product_title', $task_title);
+            }
+            update_post_meta($complete_order_id, 'buyer_id', $user_id);
+            update_post_meta($complete_order_id, 'seller_id', $seller_id);
+            update_post_meta($complete_order_id, '_buyer_id', $user_id);
+            update_post_meta($complete_order_id, '_seller_id', $seller_id);
+            update_post_meta($complete_order_id, '_task_status', 'hired');
+            update_post_meta($complete_order_id, '_taskbot_order_status', 'hired');
+
+            // Log order meta snapshot for visibility
+            $meta_keys = ['payment_type','seller_id','_seller_id','buyer_id','_buyer_id','_task_id','_mnt_task_id','_task_status','_taskbot_order_status','_linked_profile'];
+            $meta_snapshot = [];
+            foreach ($meta_keys as $mk) {
+                $meta_snapshot[$mk] = get_post_meta($complete_order_id, $mk, true);
+            }
+            error_log('MNT: Order meta snapshot before Taskbot hook for order ' . $complete_order_id . ': ' . json_encode($meta_snapshot));
+
+            do_action('taskbot_complete_order', $complete_order_id);
+
+            // Diagnostic: run the same WP_Query used by dashboard to verify order visibility
+            $diagnostic_args = [
+                'posts_per_page'    => -1,
+                'post_type'         => 'shop_order',
+                'post_status'       => ['wc-completed','wc-pending','wc-on-hold','wc-cancelled','wc-refunded','wc-processing'],
+                'fields'            => 'ids',
+                'meta_query'        => [
+                    'relation' => 'AND',
+                    [ 'key' => 'payment_type', 'value' => 'tasks', 'compare' => '=' ],
+                    [ 'key' => 'seller_id', 'value' => $seller_id, 'compare' => '=' ],
+                ],
+            ];
+            // Ensure caches are refreshed and filters run like the dashboard page
+            clean_post_cache($complete_order_id);
+            wp_cache_delete($complete_order_id, 'post_meta');
+            $diagnostic_args['suppress_filters'] = false;
+            $diagnostic_query = new \WP_Query($diagnostic_args);
+            $diag_ids = $diagnostic_query->posts;
+            error_log('MNT Diagnostic: Dashboard query found orders: ' . json_encode($diag_ids));
+            // Log the actual SQL WP constructed for the diagnostic query (helps debug meta_query aliasing)
+            if (property_exists($diagnostic_query, 'request')) {
+                error_log('MNT Diagnostic SQL: ' . $diagnostic_query->request);
+            }
+            error_log('MNT Diagnostic: Is our order present? ' . (in_array($complete_order_id, $diag_ids) ? 'YES' : 'NO'));
+
+            // Also log the actual post_status of the order for sanity
+            if ($complete_order_id) {
+                $ps = get_post_status($complete_order_id);
+                error_log('MNT Diagnostic: Order ' . $complete_order_id . ' post_status=' . $ps);
+            }
+
+            // Direct DB check (bypass WP filters) to ensure meta exists on orders
+            $found_via_db = $wpdb->get_col( $wpdb->prepare(
+                "SELECT pm1.post_id FROM {$wpdb->postmeta} pm1 JOIN {$wpdb->postmeta} pm2 ON pm1.post_id = pm2.post_id WHERE pm1.meta_key = %s AND pm1.meta_value = %s AND pm2.meta_key = %s AND pm2.meta_value = %s",
+                'payment_type', 'tasks', 'seller_id', $seller_id
+            ) );
+            error_log('MNT Diagnostic DB check (payment_type=tasks & seller_id=' . $seller_id . '): ' . json_encode($found_via_db));
+
+            // Additional DB check that also enforces post_status and post_type to mirror the WP_Query conditions
+            $post_statuses = "'wc-completed','wc-pending','wc-on-hold','wc-cancelled','wc-refunded','wc-processing'";
+            $sql = "SELECT p.ID FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm1 ON p.ID = pm1.post_id JOIN {$wpdb->postmeta} pm2 ON p.ID = pm2.post_id WHERE pm1.meta_key = %s AND pm1.meta_value = %s AND pm2.meta_key = %s AND pm2.meta_value = %s AND p.post_type = 'shop_order' AND p.post_status IN ($post_statuses)";
+            $prepared_sql = $wpdb->prepare( $sql, 'payment_type', 'tasks', 'seller_id', $seller_id );
+            error_log('MNT Diagnostic Prepared SQL: ' . $prepared_sql);
+            $found_with_status = $wpdb->get_col( $prepared_sql );
+            error_log('MNT Diagnostic DB+status check (payment_type=tasks & seller_id=' . $seller_id . ' & post_status IN ' . $post_statuses . '): ' . json_encode($found_with_status));
+            // Log full rows if nothing found to understand mismatch
+            if (empty($found_with_status)) {
+                $rows = $wpdb->get_results( $prepared_sql );
+                error_log('MNT Diagnostic DB+status - rows: ' . json_encode($rows));
+            }
+
+            // Log post_status for each candidate found without status filter to inspect mismatches
+            if (!empty($found_via_db)) {
+                $status_map = [];
+                foreach ($found_via_db as $pid) {
+                    $row = $wpdb->get_row($wpdb->prepare("SELECT ID, post_status FROM {$wpdb->posts} WHERE ID = %d", $pid), ARRAY_A);
+                    $status_map[$pid] = $row ? $row['post_status'] : null;
+                }
+                error_log('MNT Diagnostic: Post status map for candidates: ' . json_encode($status_map));
+            }
+
+            // Log the specific order post row for the complete order id
+            if (!empty($complete_order_id)) {
+                $post_row = $wpdb->get_row($wpdb->prepare("SELECT ID, post_status FROM {$wpdb->posts} WHERE ID = %d", $complete_order_id), ARRAY_A);
+                error_log('MNT Diagnostic: Post row for complete_order_id ' . $complete_order_id . ': ' . json_encode($post_row));
+            }
+        } else {
+            error_log('MNT: No order available to fire taskbot_complete_order');
+        }
+
+        wp_cache_delete($task_id, 'post_meta');
+        wp_cache_delete($wc_order_id, 'post_meta');
+        clean_post_cache($task_id);
+
+        // Optional verification (safe)
+        $hook_result = [
+            'status'    => 'success',
+            'order_id'  => $wc_order_id,
+            'task_id'   => $task_id,
+            'task_status' => get_post_meta($task_id, '_task_status', true),
+            'order_status' => $wc_order_id ? wc_get_order($wc_order_id)->get_status() : null,
+        ];
+
+    } catch (Exception $e) {
+        error_log('MNT Fund Escrow - TRY/CATCH ERROR: ' . $e->getMessage());
+
+        $hook_result = [
+            'status'  => 'error',
+            'message' => $e->getMessage(),
+        ];
     }
+
+    wp_send_json_success([
+        'message'    => '<strong>✅ Escrow Funded & Task Purchased!</strong>',
+        'order_id'   => $wc_order_id,
+        'task_hired' => true,
+        'hook_result'=> $hook_result
+    ]);
+}
+
+}
 
     /**
      * AJAX Handler: Complete Escrow Funds (client completes contract for non-milestone projects)
@@ -908,55 +1264,6 @@ class Init {
         } else {
             wp_send_json_error(['message' => 'Failed to process transfer.']);
         }
-    }
-
-    /**
-     * Enqueue scripts and styles
-     */
-    public static function enqueue_scripts() {
-        wp_enqueue_style(
-            'mnt-escrow-style',
-            plugins_url('assets/css/style.css', dirname(dirname(__FILE__))),
-            [],
-            '1.0.0'
-        );
-
-        wp_enqueue_script(
-            'mnt-escrow-script',
-            plugins_url('assets/js/escrow.js', dirname(dirname(__FILE__))),
-            ['jquery'],
-            '1.0.0',
-            true
-        );
-
-        // Enqueue the hire handler script for escrow creation feedback
-        wp_enqueue_script(
-            'mnt-hire-script',
-            plugins_url('assets/js/mnt-hire.js', dirname(dirname(__FILE__))),
-            ['jquery'],
-            '1.0.0',
-            true
-        );
-
-        // Localize for escrow.js and mnt-complete-escrow.js
-        $mnt_escrow_localize = [
-            'ajaxUrl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('mnt_nonce'),
-            'restUrl' => rest_url('mnt/v1'),
-            'restNonce' => wp_create_nonce('wp_rest'),
-            'currentUserId' => get_current_user_id()
-        ];
-        wp_localize_script('mnt-escrow-script', 'mntEscrow', $mnt_escrow_localize);
-        // Enqueue and localize mnt-complete-escrow.js for modal Complete button
-        // Ensure jQuery is loaded before mnt-complete-escrow.js
-        wp_enqueue_script(
-            'mnt-complete-escrow-script',
-            plugins_url('assets/js/mnt-complete-escrow.js', dirname(dirname(__FILE__))),
-            ['jquery'],
-            '1.0.0',
-            true
-        );
-        wp_localize_script('mnt-complete-escrow-script', 'mntEscrow', $mnt_escrow_localize);
     }
 
     /**
@@ -1324,41 +1631,9 @@ class Init {
             wp_send_json_error(['message' => 'Insufficient funds in wallet. Please add funds first.']);
         }
         
-        // Create escrow transaction via API (this automatically deducts from wallet)
-        // IMPORTANT: Pass project_id so backend can link the escrow to this project
-        error_log('=== MNT Escrow Creation Request ===');
-        error_log('Seller: ' . $seller_id . ', Buyer: ' . $buyer_id . ', Amount: ' . $amount . ', Project: ' . $project_id);
-        
-        $escrow_result = \MNT\Api\Escrow::create((string)$seller_id, (string)$buyer_id, $amount, (string)$project_id);
-        
-        error_log('=== MNT Escrow Creation Response ===');
-        error_log('Response: ' . print_r($escrow_result, true));
-        
-        if (!$escrow_result || isset($escrow_result['error'])) {
-            $error_message = $escrow_result['error'] ?? 'Failed to create escrow transaction';
-            error_log('MNT Escrow Creation Failed: ' . print_r($escrow_result, true));
-            wp_send_json_error(['message' => $error_message]);
-        }
-        
-        // Get escrow ID from response
-        $escrow_id = $escrow_result['id'] ?? $escrow_result['escrow_id'] ?? '';
-        $escrow_status = $escrow_result['status'] ?? 'funded';
-        
-        if (!$escrow_id) {
-            error_log('MNT Escrow Creation: No ID returned - ' . print_r($escrow_result, true));
-            wp_send_json_error(['message' => 'Escrow created but ID not returned']);
-        }
-        
-        // Store escrow metadata in project
-        update_post_meta($project_id, 'mnt_escrow_id', $escrow_id);
-        update_post_meta($project_id, 'mnt_escrow_amount', $amount);
-        update_post_meta($project_id, 'mnt_escrow_buyer', $buyer_id);
-        update_post_meta($project_id, 'mnt_escrow_seller', $seller_id);
-        update_post_meta($project_id, 'mnt_escrow_status', $escrow_status);
-        update_post_meta($project_id, 'mnt_escrow_created_at', current_time('mysql'));
-        
-        // Update project status to hired
-        update_post_meta($project_id, '_post_project_status', 'hired');
+        // IMPORTANT: Create the WooCommerce order first (wc_create_order -> set payment -> set total -> save)
+        // then create the escrow transaction via API. This ensures WP/WC internal joins and meta
+        // are properly initialized so dashboard queries include the order.
         
         // Get proposal ID if passed
         $proposal_id = isset($_POST['proposal_id']) ? intval($_POST['proposal_id']) : 0;
@@ -1370,8 +1645,9 @@ class Init {
             update_post_meta($proposal_id, 'project_id', $project_id);
         }
         
-        // Create WooCommerce order for tracking
+        // Create WooCommerce order for tracking (must happen BEFORE calling Escrow::create())
         $order_url = '';
+        $order = null;
         if (class_exists('WooCommerce')) {
             $order = wc_create_order(['customer_id' => $buyer_id]);
             if (!is_wp_error($order)) {
@@ -1413,12 +1689,57 @@ class Init {
                 
                 $order->add_meta_data('cus_woo_product_data', $invoice_data);
                 
-                $order->set_total($amount);
-                $order->set_status('processing', 'Escrow funded - Project hired');
+                // Set payment method, total and save ORDER before creating the escrow
                 $order->set_payment_method('mnt_escrow');
                 $order->set_payment_method_title('Escrow Payment');
+                $order->set_total($amount);
+                $order->set_status('pending');
                 $order->save();
-                
+
+                // Ensure task_id is stored for post-processing
+                update_post_meta($order->get_id(), '_mnt_task_id', $project_id);
+
+                // Now create escrow transaction via API (this will deduct funds from wallet)
+                error_log('=== MNT Escrow Creation Request (post-order) ===');
+                error_log('Seller: ' . $seller_id . ', Buyer: ' . $buyer_id . ', Amount: ' . $amount . ', Project: ' . $project_id . ', Order: ' . $order->get_id());
+                $escrow_result = \MNT\Api\Escrow::create((string)$seller_id, (string)$buyer_id, $amount, (string)$project_id);
+                error_log('=== MNT Escrow Creation Response ===');
+                error_log('Response: ' . print_r($escrow_result, true));
+
+                if (!$escrow_result || isset($escrow_result['error'])) {
+                    $error_message = $escrow_result['error'] ?? 'Failed to create escrow transaction';
+                    error_log('MNT Escrow Creation Failed: ' . print_r($escrow_result, true));
+                    // Mark order meta so admin can diagnose
+                    update_post_meta($order->get_id(), 'mnt_escrow_create_error', $error_message);
+                    wp_send_json_error(['message' => $error_message]);
+                }
+
+                // Get escrow ID from response
+                $escrow_id = $escrow_result['id'] ?? $escrow_result['escrow_id'] ?? '';
+                $escrow_status = $escrow_result['status'] ?? 'pending';
+
+                if (!$escrow_id) {
+                    error_log('MNT Escrow Creation: No ID returned - ' . print_r($escrow_result, true));
+                    update_post_meta($order->get_id(), 'mnt_escrow_create_error', 'no_id_returned');
+                    wp_send_json_error(['message' => 'Escrow created but ID not returned']);
+                }
+
+                // Store escrow metadata in project and order
+                update_post_meta($project_id, 'mnt_escrow_id', $escrow_id);
+                update_post_meta($project_id, 'mnt_escrow_amount', $amount);
+                update_post_meta($project_id, 'mnt_escrow_buyer', $buyer_id);
+                update_post_meta($project_id, 'mnt_escrow_seller', $seller_id);
+                update_post_meta($project_id, 'mnt_escrow_status', $escrow_status);
+                update_post_meta($project_id, 'mnt_escrow_created_at', current_time('mysql'));
+                // Update project status to hired
+                update_post_meta($project_id, '_post_project_status', 'hired');
+
+                // Store escrow metadata on the order
+                $order->add_meta_data('mnt_escrow_id', $escrow_id);
+                $order->add_meta_data('mnt_escrow_project_id', 'order-' . $order->get_id());
+                $order->add_meta_data('payment_type', 'escrow');
+                $order->save();
+
                 // Build activity URL
                 $order_url = Taskbot_Profile_Menu::taskbot_profile_menu_link('projects', $buyer_id, true, 'activity', $proposal_id ? $proposal_id : $order->get_id());
                 if (!$order_url) {
@@ -1436,5 +1757,262 @@ class Init {
             'project_id' => $project_id,
             'redirect_url' => $order_url
         ]);
+    }
+    
+    /**
+     * AJAX handler to create WooCommerce order BEFORE escrow page loads
+     * Called when user clicks "Proceed to secure checkout" on cart page
+     */
+    public static function handle_create_order_before_escrow_ajax() {
+        error_log('=== MNT: CREATE ORDER BEFORE ESCROW AJAX ===');
+        
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'mnt_create_order_nonce')) {
+            error_log('❌ Nonce verification failed');
+            wp_send_json_error(['message' => 'Security check failed']);
+            return;
+        }
+        
+        $task_id = isset($_POST['task_id']) ? intval($_POST['task_id']) : 0;
+        $merchant_id = isset($_POST['merchant_id']) ? intval($_POST['merchant_id']) : 0;
+        $client_id = isset($_POST['client_id']) ? intval($_POST['client_id']) : 0;
+        $amount = isset($_POST['amount']) ? floatval($_POST['amount']) : 0;
+        $package_key = isset($_POST['package_key']) ? sanitize_text_field($_POST['package_key']) : '';
+        
+        error_log('Task ID: ' . $task_id);
+        error_log('Merchant ID: ' . $merchant_id);
+        error_log('Client ID: ' . $client_id);
+        error_log('Amount: ' . $amount);
+        error_log('Package Key: ' . $package_key);
+        
+        // Validate inputs
+        if (empty($task_id) || empty($merchant_id) || empty($client_id) || empty($amount)) {
+            error_log('❌ Missing required parameters');
+            wp_send_json_error(['message' => 'Missing required parameters']);
+            return;
+        }
+        
+        // Verify WooCommerce is active
+        if (!class_exists('WooCommerce')) {
+            error_log('❌ WooCommerce not found');
+            wp_send_json_error(['message' => 'WooCommerce is not active']);
+            return;
+        }
+        
+        try {
+            // Create WooCommerce order
+            $wc_order = wc_create_order(['customer_id' => $client_id]);
+            
+            if (is_wp_error($wc_order)) {
+                error_log('❌ Order creation failed: ' . $wc_order->get_error_message());
+                wp_send_json_error(['message' => 'Failed to create order: ' . $wc_order->get_error_message()]);
+                return;
+            }
+            
+            // FIX #1: Get the Linked Profile ID (Required for Seller Dashboard)
+            $linked_profile_id = get_user_meta($merchant_id, '_linked_profile', true);
+            // Fallback: If no profile found (rare), use merchant_id, but log warning
+            if (empty($linked_profile_id)) {
+                error_log('⚠️  Warning: No Linked Profile found for User ' . $merchant_id);
+            }
+            
+            // Get task details
+            $task_post = get_post($task_id);
+            $task_title = $task_post ? $task_post->post_title : 'Task #' . $task_id;
+            
+            // Add product item to order
+            $item = new \WC_Order_Item_Product();
+            $item->set_name($task_title);
+            $item->set_quantity(1);
+            $item->set_subtotal($amount);
+            $item->set_total($amount);
+            $item->set_product_id($task_id); // Links the item to the product internally
+            $wc_order->add_item($item);
+            
+            // FIX #2: Add Underscores to Critical IDs (Taskbot expects '_seller_id', not 'seller_id')
+            $wc_order->add_meta_data('_seller_id', $merchant_id);
+            $wc_order->add_meta_data('_buyer_id', $client_id);
+            $wc_order->add_meta_data('_linked_profile', $linked_profile_id); // Critical for Seller visibility
+            
+            // Helpful snapshots (for debugging)
+            $wc_order->add_meta_data('_product_id', $task_id);
+            $wc_order->add_meta_data('_product_title', $task_title);
+            
+            // Also keep non-underscore versions for compatibility
+            $wc_order->add_meta_data('task_product_id', $task_id);
+            $wc_order->add_meta_data('seller_id', $merchant_id);
+            $wc_order->add_meta_data('buyer_id', $client_id);
+            
+            // Custom Escrow/Payment Fields
+            $wc_order->add_meta_data('payment_type', 'tasks');
+            $wc_order->add_meta_data('package_key', $package_key);
+            
+            // FIX #3: Taskbot-specific hidden fields (with underscores - critical for dashboard visibility)
+            // Set to 'pending' now. Payment success webhook will update this to 'hired'.
+            $wc_order->add_meta_data('_taskbot_order_status', 'pending');
+            $wc_order->add_meta_data('_taskbot_order_type', 'task');
+            $wc_order->add_meta_data('_task_status', 'pending'); // Alternative field, updated to 'hired' when funds released
+            
+            // Set order total and status
+            $wc_order->set_total($amount);
+            $wc_order->set_status('pending');
+            $wc_order->save();
+            // Ensure WP post_status matches WooCommerce status so dashboard queries include the order
+            wp_update_post(['ID' => $wc_order->get_id(), 'post_status' => 'wc-pending']);
+            
+            $wc_order_id = $wc_order->get_id();
+            $escrow_project_id = "order-{$wc_order_id}";
+            
+            // Add escrow project ID to order
+            $wc_order->add_meta_data('mnt_escrow_project_id', $escrow_project_id);
+            $wc_order->save();
+            
+            // Update task meta
+            update_post_meta($task_id, 'mnt_last_order_id', $wc_order_id);
+            update_post_meta($task_id, 'mnt_escrow_project_id', $escrow_project_id);
+            // Always save task ID in order meta for robust post-processing
+            update_post_meta($wc_order_id, '_mnt_task_id', $task_id);
+            
+            error_log('✅ Order Created Successfully: #' . $wc_order_id);
+            error_log('Linked Profile ID: ' . ($linked_profile_id ?: 'NOT FOUND'));
+            error_log('Escrow Project ID: ' . $escrow_project_id);
+            
+            wp_send_json_success([
+                'message' => 'Order created successfully',
+                'order_id' => $wc_order_id,
+                'escrow_project_id' => $escrow_project_id
+            ]);
+            
+        } catch (\Exception $e) {
+            error_log('❌ Exception: ' . $e->getMessage());
+            wp_send_json_error(['message' => 'Error: ' . $e->getMessage()]);
+        }
+    }
+
+
+    /**
+ * Update Taskbot task status when escrow is funded
+ *
+ * @param string $project_id The Escrow Project ID (e.g., 'order-7181')
+ */
+    /**
+     * Update Taskbot task status when escrow is funded
+     *
+     * @param string $project_id The Escrow Project ID (e.g., 'order-7181')
+     */
+    /**
+     * Update Taskbot task status when escrow is funded
+     *
+     * @param int $task_id The Taskbot Task ID
+     */
+    public static function mnt_update_task_status_on_escrow_funded( $task_id ) {
+        if ( ! $task_id ) {
+            error_log("MNT: No Task ID provided to mnt_update_task_status_on_escrow_funded");
+            return;
+        }
+        update_post_meta( $task_id, '_task_status', 'hired' );
+        error_log("MNT: Task ID $task_id status updated to 'hired'");
+    }
+
+    /**
+     * Admin AJAX: Backfill task orders that are stuck in 'draft'.
+     * POST params:
+     *  - run: (bool) if true, perform updates; otherwise dry-run
+     *  - nonce: optional nonce for extra safety
+     */
+    public static function handle_mnt_backfill_task_orders_ajax() {
+        if ( ! current_user_can('manage_options') ) {
+            wp_send_json_error(['message' => 'Insufficient permissions']);
+        }
+
+        // Verify nonce
+        if ( empty($_POST['nonce']) || ! wp_verify_nonce($_POST['nonce'], 'mnt_admin_nonce') ) {
+            wp_send_json_error(['message' => 'Invalid nonce']);
+        }
+
+        $run = isset($_POST['run']) && ($_POST['run'] === '1' || $_POST['run'] === 1 || $_POST['run'] === true || $_POST['run'] === 'true');
+
+        global $wpdb;
+        // Find candidate orders: payment_type = 'tasks' and post_status = 'draft'
+        $sql = "SELECT p.ID FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id WHERE pm.meta_key = %s AND pm.meta_value = %s AND p.post_type = 'shop_order' AND p.post_status = 'draft'";
+        $ids = $wpdb->get_col( $wpdb->prepare($sql, 'payment_type', 'tasks') );
+
+        $report = [ 'count' => count($ids), 'updated' => [], 'skipped' => [] ];
+
+        if ($run && !empty($ids)) {
+            foreach ($ids as $id) {
+                $order = wc_get_order($id);
+                // Decide target status: if already hired, set processing; else pending
+                $taskbot_status = get_post_meta($id, '_taskbot_order_status', true);
+                $task_status = get_post_meta($id, '_task_status', true);
+                $target = (!empty($taskbot_status) && $taskbot_status === 'hired') || (!empty($task_status) && $task_status === 'hired') ? 'processing' : 'pending';
+
+                if ($order) {
+                    try {
+                        $order->update_status($target, 'Backfill by MNT: fixing draft -> wc-' . $target, true);
+                        // Re-ensure Taskbot meta exists
+                        update_post_meta($id, 'payment_type', 'tasks');
+                        update_post_meta($id, '_mnt_task_id', get_post_meta($id, '_mnt_task_id', true));
+                        clean_post_cache($id);
+                        wp_cache_delete($id, 'post_meta');
+                        $report['updated'][] = ['id' => $id, 'target' => $target];
+                    } catch (Exception $e) {
+                        $report['skipped'][] = ['id' => $id, 'error' => $e->getMessage()];
+                    }
+                } else {
+                    // Fallback direct post_status update
+                    try {
+                        wp_update_post(['ID' => $id, 'post_status' => 'wc-' . $target]);
+                        update_post_meta($id, 'payment_type', 'tasks');
+                        clean_post_cache($id);
+                        wp_cache_delete($id, 'post_meta');
+                        $report['updated'][] = ['id' => $id, 'target' => $target];
+                    } catch (Exception $e) {
+                        $report['skipped'][] = ['id' => $id, 'error' => $e->getMessage()];
+                    }
+                }
+            }
+        }
+
+        wp_send_json_success(['run' => $run, 'report' => $report]);
+    }
+
+    /**
+     * Admin AJAX: Repair a single order by forcing WooCommerce status update and refreshing caches
+     * POST params:
+     * - order_id (int)
+     * - nonce
+     */
+    public static function handle_mnt_admin_repair_order_ajax() {
+        if ( ! current_user_can('manage_options') ) {
+            wp_send_json_error(['message' => 'Insufficient permissions']);
+        }
+        if ( empty($_POST['nonce']) || ! wp_verify_nonce($_POST['nonce'], 'mnt_admin_nonce') ) {
+            wp_send_json_error(['message' => 'Invalid nonce']);
+        }
+
+        $order_id = isset($_POST['order_id']) ? intval($_POST['order_id']) : 0;
+        if (!$order_id) {
+            wp_send_json_error(['message' => 'Missing order ID']);
+        }
+
+        $order = function_exists('wc_get_order') ? wc_get_order($order_id) : null;
+        if (!$order) {
+            wp_send_json_error(['message' => 'Order not found']);
+        }
+
+        $previous = get_post_status($order_id);
+        try {
+            $order->update_status('processing', 'Admin repair: forced processing to repair dashboard visibility', true);
+            clean_post_cache($order_id);
+            wp_cache_delete($order_id, 'post_meta');
+            // Ensure critical meta present
+            update_post_meta($order_id, 'payment_type', get_post_meta($order_id, 'payment_type', true) ?: 'tasks');
+            $seller = get_post_meta($order_id, 'seller_id', true) ?: get_post_meta($order_id, '_seller_id', true);
+            if ($seller) update_post_meta($order_id, 'seller_id', $seller);
+            wp_send_json_success(['order_id' => $order_id, 'previous_status' => $previous, 'new_status' => get_post_status($order_id)]);
+        } catch (\Exception $e) {
+            wp_send_json_error(['message' => $e->getMessage()]);
+        }
     }
 }

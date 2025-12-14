@@ -43,6 +43,77 @@ if ($task_id && $package_key) {
     }
 }
 
+// Check if order was created on cart page (from URL parameters)
+$wc_order = null;
+$wc_order_id = isset($_GET['order_id']) ? intval($_GET['order_id']) : null;
+$escrow_project_id = isset($_GET['escrow_project_id']) ? sanitize_text_field($_GET['escrow_project_id']) : null;
+
+if ($wc_order_id && $escrow_project_id) {
+    // Order was created on cart page - use existing order
+    error_log('=== MNT: PAGE LOAD - Using Pre-Created Order from Cart ===');
+    error_log('Order ID from URL: ' . $wc_order_id);
+    error_log('Escrow Project ID from URL: ' . $escrow_project_id);
+    
+    $wc_order = wc_get_order($wc_order_id);
+    
+    if (!$wc_order || is_wp_error($wc_order)) {
+        error_log('❌ Order not found: ' . $wc_order_id);
+        $wc_order = null;
+        $wc_order_id = null;
+        $escrow_project_id = null;
+    } else {
+        error_log('✅ Successfully loaded pre-created order: #' . $wc_order_id);
+    }
+} else {
+    // Fallback: Create order on page load if not provided (shouldn't happen in normal flow)
+    error_log('=== MNT: PAGE LOAD - No order in URL, creating new one (FALLBACK) ===');
+    
+    if ($task_id && $client_id && $merchant_id && class_exists('WooCommerce')) {
+        try {
+            $wc_order = wc_create_order(['customer_id' => $client_id]);
+            
+            if (!is_wp_error($wc_order)) {
+                $task_post = get_post($task_id);
+                $task_title = $task_post ? $task_post->post_title : 'Task #' . $task_id;
+                
+                $item = new WC_Order_Item_Product();
+                $item->set_name($task_title);
+                $item->set_quantity(1);
+                $item->set_subtotal($amount);
+                $item->set_total($amount);
+                $wc_order->add_item($item);
+                
+                $wc_order->add_meta_data('task_product_id', $task_id);
+                $wc_order->add_meta_data('_mnt_seller_id', $merchant_id);
+                $wc_order->add_meta_data('_mnt_buyer_id', $client_id);
+                $wc_order->add_meta_data('payment_type', 'tasks');
+                $wc_order->add_meta_data('package_key', $package_key);
+                
+                $wc_order->set_total($amount);
+                $wc_order->set_status('pending');
+                $wc_order->save();
+                update_post_meta($wc_order->get_id(), '_mnt_task_id', $task_id);
+                
+                $wc_order_id = $wc_order->get_id();
+                $escrow_project_id = "order-{$wc_order_id}";
+                
+                $wc_order->add_meta_data('mnt_escrow_project_id', $escrow_project_id);
+                $wc_order->save();
+                
+                update_post_meta($task_id, 'mnt_last_order_id', $wc_order_id);
+                update_post_meta($task_id, 'mnt_escrow_project_id', $escrow_project_id);
+                
+                error_log('✅ Fallback Order Created: #' . $wc_order_id);
+                error_log('Escrow Project ID: ' . $escrow_project_id);
+            } else {
+                error_log('❌ Order creation failed: ' . $wc_order->get_error_message());
+            }
+        } catch (Exception $e) {
+            error_log('❌ Exception: ' . $e->getMessage());
+        }
+    }
+}
+
 // Check if there's an existing escrow for this task
 $existing_escrow_status = null;
 if ($task_id) {
@@ -118,8 +189,8 @@ if ($task_id) {
                                     $order->add_meta_data('mnt_escrow_id', $existing_escrow_id);
                                     $order->add_meta_data('project_id', $task_id);
                                     $order->add_meta_data('task_product_id', $task_id);
-                                    $order->add_meta_data('seller_id', $seller_id);
-                                    $order->add_meta_data('buyer_id', $buyer_id);
+                                    $order->add_meta_data('_mnt_seller_id', $seller_id);
+                                    $order->add_meta_data('_mnt_buyer_id', $buyer_id);
                                     $order->add_meta_data('_task_status', 'hired');
                                     $order->add_meta_data('payment_type', 'escrow');
                                     $order->add_meta_data('escrow_funded', 'yes');
@@ -137,6 +208,7 @@ if ($task_id) {
                                     
                                     $order->set_total($escrow_amount);
                                     $order->set_status('completed');
+                                    update_post_meta($order->get_id(), '_mnt_task_id', $task_id);
                                     $order->save();
                                     
                                     $order_id = $order->get_id();
@@ -182,56 +254,131 @@ if ($task_id) {
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']) && wp_verify_nonce($_POST['create_escrow_nonce'], 'create_escrow_task')) {
     $task_id = intval($_POST['task_id']);
-    $project_id = $task_id; // Map task_id to project_id
     $merchant_id = intval($_POST['merchant_id']);
     $client_id = intval($_POST['client_id']);
     $amount = floatval($_POST['amount']);
     $package_key = isset($_POST['package_key']) ? sanitize_text_field($_POST['package_key']) : '';
 
-    // Check for valid task_id
+    error_log('=== MNT: FORM SUBMISSION - Using Pre-Created Order ===');
+    error_log('Order ID from page load: ' . ($wc_order_id ?? 'NOT FOUND'));
+    error_log('Escrow Project ID: ' . ($escrow_project_id ?? 'NOT FOUND'));
+
+    // Check for valid task_id and pre-created order
     if (empty($task_id) || $task_id === 0) {
-        $escrow_error = '<strong>Error:</strong> Task ID is missing or invalid. Please ensure you are hiring for a valid task.';
+        $escrow_error = '<strong>Error:</strong> Task ID is missing or invalid.';
+        error_log('MNT: ERROR - Invalid task ID');
+    } elseif (empty($wc_order_id) || empty($escrow_project_id)) {
+        $escrow_error = '<strong>Error:</strong> Order was not created on page load. Please refresh and try again.';
+        error_log('MNT: ERROR - Order ID missing from page load');
     } else {
+        // Check if this order already has an escrow created
+        $wc_order_obj = wc_get_order($wc_order_id);
+        $order_escrow_id = $wc_order_obj ? $wc_order_obj->get_meta('mnt_escrow_id') : '';
+        
+        if ($order_escrow_id) {
+            $escrow_error = '<strong>Error:</strong> An escrow has already been created for this order (#' . $wc_order_id . '). Escrow ID: ' . $order_escrow_id . '. Please go back to cart and start fresh.';
+            error_log('MNT: ERROR - Escrow already exists for order #' . $wc_order_id . ', escrow ID: ' . $order_escrow_id);
+        } else {
+            error_log('MNT: No existing escrow found for order #' . $wc_order_id . ' - proceeding with creation');
         $buyer_check = get_userdata($client_id);
         $seller_check = get_userdata($merchant_id);
         if (!$buyer_check || !$seller_check) {
-            $escrow_error = '<strong>Error:</strong> ';
-            if (!$buyer_check) {
-                $escrow_error .= 'Buyer (client_id) user not found. ';
-            }
-            if (!$seller_check) {
-                $escrow_error .= 'Seller (merchant_id) user not found.';
-            }
+            $escrow_error = '<strong>Error:</strong> Invalid buyer or seller.';
+            error_log('MNT: ERROR - Invalid buyer or seller');
         } else {
-            // Use task_id as project_id for API
-            $escrow_project_id = (string)$task_id;
+            if (!isset($escrow_error)) {
+                error_log('=== MNT: STEP 3 - Creating Escrow Transaction ===');
+                error_log('Parameters:');
+                error_log('  merchant_id: ' . $merchant_id);
+                error_log('  client_id: ' . $client_id);
+                error_log('  project_id: ' . $escrow_project_id);
+                error_log('  amount: ' . $amount);
+                error_log('');
+                error_log('Calling API...');
+                
+                // Console log the payload before sending
+                ?>
+                <script>
+                console.log('%c🚀 ESCROW API CALL - PAYLOAD BEING SENT', 'color: #10b981; font-weight: bold; font-size: 16px; background: #d1fae5; padding: 8px;');
+                console.log('%c━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'color: #10b981;');
+                console.log('');
+                console.log('%c📡 API Endpoint:', 'color: #0ea5e9; font-weight: bold;');
+                console.log('POST https://escrow-api-dfl6.onrender.com/api/escrow/create_transaction');
+                console.log('');
+                console.log('%c📦 Request Payload:', 'color: #8b5cf6; font-weight: bold; font-size: 14px;');
+                console.log(JSON.stringify({
+                    merchant_id: "<?php echo (string)$merchant_id; ?>",
+                    client_id: "<?php echo (string)$client_id; ?>",
+                    project_id: "<?php echo isset($escrow_project_id) ? $escrow_project_id : ''; ?>",
+                    amount: <?php echo $amount; ?>
+                }, null, 2));
+                console.log('');
+                console.log('%c📋 Payload Details:', 'color: #f59e0b; font-weight: bold;');
+                console.log('  merchant_id:', "<?php echo (string)$merchant_id; ?>", '(Seller/Freelancer)');
+                console.log('  client_id:', "<?php echo (string)$client_id; ?>", '(Buyer/Customer)');
+                console.log('  project_id:', "<?php echo isset($escrow_project_id) ? $escrow_project_id : ''; ?>", '(Order-based ID)');
+                console.log('  amount:', <?php echo $amount; ?>, '(₦)');
+                console.log('');
+                console.log('%c🔧 Additional Context:', 'color: #ec4899; font-weight: bold;');
+                console.log('  Task ID:', <?php echo $task_id; ?>);
+                console.log('  WooCommerce Order ID:', <?php echo isset($wc_order_id) ? $wc_order_id : 0; ?>);
+                console.log('  Package Key:', "<?php echo $package_key; ?>");
+                console.log('  Auto Release:', false);
+                console.log('');
+                console.log('%c⏳ Sending request to API...', 'color: #06b6d4; font-style: italic;');
+                console.log('%c━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'color: #10b981;');
+                </script>
+                <?php
+                
+                // Regular escrow transaction for tasks - create only (PENDING status)
+                // API signature: create($merchant_id, $client_id, $project_id, $amount, $auto_release)
+                $escrow_result = \MNT\Api\Escrow::create((string)$merchant_id, (string)$client_id, $escrow_project_id, $amount, false);
             
-            error_log('MNT: Creating regular escrow for TASK - merchant_id: ' . $merchant_id . ', client_id: ' . $client_id . ', project_id (task_id): ' . $escrow_project_id . ', amount: ' . $amount);
-            
-            // Regular escrow transaction for tasks - create only (PENDING status)
-            // API signature: create($merchant_id, $client_id, $project_id, $amount, $auto_release)
-            $escrow_result = \MNT\Api\Escrow::create((string)$merchant_id, (string)$client_id, $escrow_project_id, $amount, false);
+            error_log('=== MNT: STEP 5 - API Response Received ===');
+            error_log('HTTP Status: ' . (isset($escrow_result['http_code']) ? $escrow_result['http_code'] : 'N/A'));
+            error_log('Response Type: ' . gettype($escrow_result));
+            if (is_array($escrow_result)) {
+                error_log('Response Keys: ' . implode(', ', array_keys($escrow_result)));
+            }
+            error_log('Full Response (JSON):');
+            error_log(json_encode($escrow_result, JSON_PRETTY_PRINT));
+            error_log('');
             
             // Check if escrow was created successfully
             $escrow_success = !empty($escrow_result['status']) || !empty($escrow_result['project_id']) || (isset($escrow_result['message']) && stripos($escrow_result['message'], 'success') !== false);
             
             if ($escrow_success) {
+                error_log('=== MNT: STEP 6 - Escrow Created Successfully ===');
+                
                 // Link escrow to task
-                $escrow_id = $escrow_result['escrow_id'] ?? 'API-' . $task_id;
-                update_post_meta($task_id, 'mnt_escrow_id', $escrow_id);
-                update_post_meta($task_id, 'mnt_escrow_amount', $amount);
-                update_post_meta($task_id, 'mnt_escrow_buyer', $client_id);
-                update_post_meta($task_id, 'mnt_escrow_seller', $merchant_id);
+                $escrow_id = $escrow_result['escrow_id'] ?? $escrow_result['id'] ?? 'API-' . $escrow_project_id;
+                error_log('Escrow ID from API: ' . $escrow_id);
+                error_log('Escrow Status: ' . ($escrow_result['status'] ?? 'PENDING'));
+                error_log('MNT: Response Keys: ' . implode(', ', array_keys($escrow_result)));
                 
-                // Escrow created in PENDING status - user will fund manually
-                update_post_meta($task_id, 'mnt_escrow_status', $escrow_result['status'] ?? 'pending');
+                error_log('=== MNT: STEP 7 - Storing Escrow Metadata ===');
                 
-                update_post_meta($task_id, 'mnt_escrow_created_at', current_time('mysql'));
-                update_post_meta($task_id, 'mnt_escrow_package_key', $package_key);
+                // Store metadata on TASK (for reference)
+                update_post_meta($task_id, 'mnt_last_escrow_id', $escrow_id);
+                error_log('Task meta updated: mnt_last_escrow_id = ' . $escrow_id);
+                
+                // Store metadata on WOOCOMMERCE ORDER (primary storage)
+                if ($wc_order && $wc_order_id) {
+                    error_log('Storing metadata on WooCommerce Order #' . $wc_order_id);
+                    
+                    $wc_order->add_meta_data('mnt_escrow_id', $escrow_id);
+                    $wc_order->add_meta_data('mnt_escrow_project_id', $escrow_project_id);
+                    $wc_order->add_meta_data('mnt_escrow_amount', $amount);
+                    $wc_order->add_meta_data('mnt_escrow_status', $escrow_result['status'] ?? 'PENDING');
+                    $wc_order->add_meta_data('task_product_id', $task_id);
+                    $wc_order->add_meta_data('seller_id', $merchant_id);
+                    $wc_order->save();
+                    error_log('Order metadata saved successfully');
+                }
                 
                 $escrow_response = $escrow_result;
                 
-                // Ensure merchant_id and client_id are in the response for the modal button
+                // Ensure all IDs are in the response for the modal button
                 if (empty($escrow_response['merchant_id'])) {
                     $escrow_response['merchant_id'] = $merchant_id;
                 }
@@ -239,17 +386,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                     $escrow_response['client_id'] = $client_id;
                 }
                 if (empty($escrow_response['project_id'])) {
-                    $escrow_response['project_id'] = $task_id;
+                    $escrow_response['project_id'] = $escrow_project_id; // Use order-based ID
+                }
+                if (empty($escrow_response['escrow_id'])) {
+                    $escrow_response['escrow_id'] = $escrow_id;
                 }
                 
-                error_log('MNT: Task escrow created - Response with IDs: ' . json_encode([
-                    'project_id' => $escrow_response['project_id'],
-                    'client_id' => $escrow_response['client_id'],
-                    'merchant_id' => $escrow_response['merchant_id']
-                ]));
+                // Add additional tracking info
+                $escrow_response['task_id'] = $task_id;
+                $escrow_response['order_id'] = $wc_order_id;
+                $escrow_response['escrow_project_id'] = $escrow_project_id;
+                
+                error_log('=== MNT: STEP 8 - Escrow Creation Complete ===');
+                error_log('Summary:');
+                error_log('  Escrow ID: ' . $escrow_id);
+                error_log('  Escrow Project ID: ' . $escrow_project_id);
+                error_log('  Task ID: ' . $task_id);
+                error_log('  Order ID: ' . ($wc_order_id ?? 'N/A'));
+                error_log('  Merchant ID: ' . $merchant_id);
+                error_log('  Client ID: ' . $client_id);
+                error_log('  Amount: ' . $amount);
+                error_log('  Status: ' . ($escrow_result['status'] ?? 'PENDING'));
+                error_log('');
+                error_log('✅ Task escrow created successfully and ready for funding!');
             } else {
+                error_log('MNT: === ESCROW CREATION FAILED ===');
+                error_log('MNT: Full Error Response: ' . print_r($escrow_result, true));
+                error_log('MNT: Error Response JSON: ' . json_encode($escrow_result, JSON_PRETTY_PRINT));
+                
                 // Show full error message and reason if available
                 $msg = '';
+                
+                // Display the entire raw response for debugging
+                $msg .= '<div style="background:#1f2937;color:#f3f4f6;padding:15px;border-radius:6px;margin-bottom:15px;font-family:monospace;font-size:12px;overflow:auto;max-height:400px;">';
+                $msg .= '<strong style="color:#fbbf24;display:block;margin-bottom:10px;">🔍 Full API Response:</strong>';
+                $msg .= '<pre style="margin:0;white-space:pre-wrap;word-wrap:break-word;">' . esc_html(json_encode($escrow_result, JSON_PRETTY_PRINT)) . '</pre>';
+                $msg .= '</div>';
+                
+                $msg .= '<div style="margin-bottom:15px;">';
                 
                 // Check for 'detail' field (API validation errors)
                 if (!empty($escrow_result['detail'])) {
@@ -287,15 +461,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                 }
                 
                 // Default message if nothing was captured
-                if (empty($msg)) {
-                    $msg .= 'Failed to create escrow. Please try again or contact support.';
+                if (empty($msg) || $msg === '<div style="margin-bottom:15px;">') {
+                    $msg = '<div style="margin-bottom:15px;">';
+                    $msg .= '<strong style="color:#ef4444;">⚠️ Failed to create escrow.</strong><br>';
+                    $msg .= 'Please check the console logs or contact support.<br>';
+                    $msg .= '</div>';
                 }
                 
+                $msg .= '</div>'; // Close error details div
+                
+                // Add helpful debugging info
+                $msg .= '<div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:12px;margin-top:10px;">';
+                $msg .= '<strong style="color:#92400e;">💡 Debugging Info:</strong><br>';
+                $msg .= '<code>merchant_id:</code> ' . esc_html($merchant_id) . '<br>';
+                $msg .= '<code>client_id:</code> ' . esc_html($client_id) . '<br>';
+                $msg .= '<code>project_id (task_id):</code> ' . esc_html($task_id) . '<br>';
                 $escrow_error = $msg;
             }
+            }
         }
+        } // Close order escrow check
     }
-}
+}          
+        
+    
+
 ?>
 
 <div class="tb-dhb-mainheading">
@@ -317,6 +507,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
 
 <div class="tb-dhb-box">
     <div class="tb-dhb-box-wrapper">
+        
+        <!-- Order Information (Created on Page Load) -->
+        <?php if ($wc_order_id && $escrow_project_id): ?>
+        <div class="tk-alert" style="background: #e0f2fe; border-left: 4px solid #0ea5e9; color: #0c4a6e; margin-bottom: 20px;">
+            <h5 style="margin: 0 0 10px 0; color: #0369a1;">
+                <i class="tb-icon-check-circle" style="color: #0ea5e9;"></i> 
+                <?php esc_html_e('Order Created Successfully', 'taskbot'); ?>
+            </h5>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin-top: 12px;">
+                <div>
+                    <strong><?php esc_html_e('WooCommerce Order ID:', 'taskbot'); ?></strong><br>
+                    <code style="background: #bae6fd; padding: 4px 8px; border-radius: 4px; font-size: 13px;">#<?php echo esc_html($wc_order_id); ?></code>
+                </div>
+                <div>
+                    <strong><?php esc_html_e('Escrow Project ID:', 'taskbot'); ?></strong><br>
+                    <code style="background: #bae6fd; padding: 4px 8px; border-radius: 4px; font-size: 13px;"><?php echo esc_html($escrow_project_id); ?></code>
+                </div>
+                <div>
+                    <strong><?php esc_html_e('Order Status:', 'taskbot'); ?></strong><br>
+                    <span style="background: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">
+                        PENDING ESCROW
+                    </span>
+                </div>
+            </div>
+            <p style="margin: 12px 0 0 0; font-size: 13px; opacity: 0.9;">
+                <strong>Next Step:</strong> Submit the form below to create the escrow transaction using this order.
+            </p>
+        </div>
+        <?php elseif ($task_id): ?>
+        <div class="tk-alert tk-alert-error" style="margin-bottom: 20px;">
+            <strong><?php esc_html_e('Error:', 'taskbot'); ?></strong>
+            <?php esc_html_e('Failed to create WooCommerce order. Please check if WooCommerce is active and try again.', 'taskbot'); ?>
+        </div>
+        <?php endif; ?>
                 
         <div class="row">
             <div class="col-lg-6 col-md-6 col-sm-12">
@@ -446,7 +670,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                     
                     // Debug log the button attributes
                     error_log('=== MNT: Modal Button Data Attributes ===');
-                    error_log('project_id: ' . ($escrow_response['project_id'] ?? $task_id ?? 'EMPTY'));
+                    error_log('project_id: ' . ($escrow_response['escrow_project_id'] ?? $escrow_project_id ?? 'EMPTY'));
                     error_log('client_id: ' . (isset($escrow_response['client_id']) ? $escrow_response['client_id'] : (isset($client_id) ? $client_id : 'EMPTY')));
                     error_log('merchant_id: ' . (isset($escrow_response['merchant_id']) ? $escrow_response['merchant_id'] : (isset($merchant_id) ? $merchant_id : 'EMPTY')));
                     ?>
@@ -466,7 +690,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                                         <p><?php esc_html_e('An escrow transaction already exists for this task but funds have not been released yet. Click the button below to release funds from your wallet to the escrow account.', 'taskbot'); ?></p>
                                     <?php endif; ?>
                                     <button id="mnt-complete-escrow-btn" class="tk-btn-solid-lg" 
-                                            data-project-id="<?php echo esc_attr($escrow_response['project_id'] ?? $task_id ?? ''); ?>" 
+                                            data-project-id="<?php echo esc_attr($escrow_response['escrow_project_id'] ?? $escrow_project_id ?? ''); ?>" 
+                                            data-task-id="<?php echo esc_attr($task_id); ?>"
+                                            data-order-id="<?php echo esc_attr($wc_order_id ?? ''); ?>"
                                             data-user-id="<?php echo esc_attr(isset($escrow_response['client_id']) ? $escrow_response['client_id'] : (isset($client_id) ? $client_id : '')); ?>"
                                             data-seller-id="<?php echo esc_attr(isset($escrow_response['merchant_id']) ? $escrow_response['merchant_id'] : (isset($merchant_id) ? $merchant_id : '')); ?>">
                                         <?php esc_html_e('Release Funds', 'taskbot'); ?>
@@ -477,40 +703,162 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                         </div>
                     </div>
                     <?php endif; ?>
+        
+        <!-- Debug and Release Funds Button Handler -->
+        <script>
+        console.log('%c━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'color: #f59e0b; font-size: 16px;');
+        console.log('%c🔍 CHECKING RELEASE FUNDS BUTTON SETUP', 'color: #f59e0b; font-weight: bold; font-size: 16px; background: #fef3c7; padding: 8px;');
+        console.log('%c━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'color: #f59e0b; font-size: 16px;');
+        console.log('jQuery loaded:', typeof jQuery !== 'undefined');
+        console.log('$ available:', typeof $ !== 'undefined');
+        console.log('mntEscrow object:', typeof mntEscrow !== 'undefined' ? mntEscrow : 'NOT LOADED');
+        
+        jQuery(document).ready(function($) {
+            console.log('%c✅ DOM READY - Checking Button', 'color: #10b981; font-weight: bold;');
+            console.log('Button exists (#mnt-complete-escrow-btn):', $('#mnt-complete-escrow-btn').length);
+            console.log('Modal exists (#mnt-complete-escrow-modal):', $('#mnt-complete-escrow-modal').length);
+            console.log('Modal visible:', $('#mnt-complete-escrow-modal').is(':visible'));
+            
+            if ($('#mnt-complete-escrow-btn').length > 0) {
+                var $btn = $('#mnt-complete-escrow-btn');
+                console.log('%c📋 Button Data Attributes:', 'color: #8b5cf6; font-weight: bold;');
+                console.log('  data-project-id:', $btn.attr('data-project-id'));
+                console.log('  data-user-id:', $btn.attr('data-user-id'));
+                console.log('  data-seller-id:', $btn.attr('data-seller-id'));
+                console.log('');
+                console.log('%c🔧 Checking mntEscrow object:', 'color: #f59e0b; font-weight: bold;');
+                if (typeof mntEscrow !== 'undefined') {
+                    console.log('  ajaxUrl:', mntEscrow.ajaxUrl);
+                    console.log('  nonce:', mntEscrow.nonce ? '✓ Present' : '✗ Missing');
+                } else {
+                    console.log('%c  ❌ mntEscrow NOT DEFINED!', 'color: #ef4444; font-weight: bold;');
+                }
+                console.log('');
+            } else {
+                console.log('%c❌ ERROR: Button not found!', 'color: #ef4444; font-weight: bold;');
+            }
+        });
+        </script>
+        
+        <!-- Log create task escrow form data before submission -->
+        <script>
+        jQuery(function($) {
+            console.log('%c━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'color: #10b981; font-size: 16px;');
+            console.log('%c🎯 MNT TASK ESCROW PAGE LOADED', 'color: #10b981; font-weight: bold; font-size: 18px; background: #d1fae5; padding: 8px;');
+            console.log('%c━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'color: #10b981; font-size: 16px;');
+            console.log('%cTimestamp:', 'font-weight: bold;', new Date().toISOString());
+            console.log('');
+            
+            // Log pre-created order details immediately
+            console.log('%c📦 PRE-CREATED ORDER DETAILS (FROM PAGE LOAD)', 'color: #0ea5e9; font-weight: bold; font-size: 15px; background: #e0f2fe; padding: 6px;');
+            console.log('WooCommerce Order ID:', '<?php echo $wc_order_id ?? "NOT CREATED"; ?>');
+            console.log('Escrow Project ID:', '<?php echo $escrow_project_id ?? "NOT CREATED"; ?>');
+            console.log('Task ID:', '<?php echo $task_id; ?>');
+            console.log('Buyer ID:', '<?php echo $client_id; ?>');
+            console.log('Seller ID:', '<?php echo $merchant_id; ?>');
+            console.log('Amount:', '<?php echo $amount; ?>');
+            console.log('Package Key:', '<?php echo $package_key; ?>');
+            console.log('');
+            console.log('%c✅ Status:', 'font-weight: bold; color: #10b981;', 'Order ready for escrow creation');
+            console.log('');
+            console.log('Task ID:', '<?php echo $task_id; ?>');
+            console.log('Buyer (Client) ID:', '<?php echo $client_id; ?>');
+            console.log('Seller (Merchant) ID:', '<?php echo $merchant_id; ?>');
+            console.log('Package Key:', '<?php echo $package_key; ?>');
+            console.log('Amount:', '<?php echo $amount; ?>');
+            console.log('');
+            
+            // Check hidden form fields
+            console.log('%c🔍 HIDDEN FORM FIELD VALUES', 'color: #8b5cf6; font-weight: bold; font-size: 14px;');
+            console.log('order_id field value:', $('input[name="order_id"]').val());
+            console.log('escrow_project_id field value:', $('input[name="escrow_project_id"]').val());
+            console.log('task_id field value:', $('input[name="task_id"]').val());
+            console.log('merchant_id field value:', $('input[name="merchant_id"]').val());
+            console.log('client_id field value:', $('input[name="client_id"]').val());
+            console.log('');
+            
+            $('#mnt-create-task-escrow-form').on('submit', function(e) {
+                var formData = $(this).serializeArray();
+                var formObj = {};
+                $.each(formData, function(i, field) {
+                    formObj[field.name] = field.value;
+                });
+                
+                console.log('');
+                console.log('%c━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'color: #3b82f6; font-size: 16px;');
+                console.log('%c🚀 FORM SUBMISSION TRIGGERED', 'color: #3b82f6; font-weight: bold; font-size: 18px; background: #dbeafe; padding: 8px;');
+                console.log('%c━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'color: #3b82f6; font-size: 16px;');
+                console.log('');
+                
+                console.log('%c📋 STEP 1: All Form Data', 'color: #8b5cf6; font-weight: bold; font-size: 14px;');
+                console.log('Complete form object:', formObj);
+                console.log('');
+                
+                console.log('%c🔑 STEP 2: Key IDs Being Submitted', 'color: #f59e0b; font-weight: bold; font-size: 14px;');
+                console.log('  ✓ Task ID:', formObj.task_id);
+                console.log('  ✓ Order ID:', formObj.order_id, '← WooCommerce Order (Pre-created)');
+                console.log('  ✓ Escrow Project ID:', formObj.escrow_project_id, '← Will be used as project_id');
+                console.log('  ✓ Merchant ID (Seller):', formObj.merchant_id);
+                console.log('  ✓ Client ID (Buyer):', formObj.client_id);
+                console.log('  ✓ Amount:', formObj.amount, '₦');
+                console.log('  ✓ Package Key:', formObj.package_key || '(none)');
+                console.log('');
+                
+                console.log('%c📡 STEP 3: API Payload That Will Be Sent', 'color: #ec4899; font-weight: bold; font-size: 14px; background: #fce7f3; padding: 6px;');
+                console.log('Endpoint: POST /api/escrow/create_transaction');
+                console.log('');
+                console.log('Payload:');
+                console.log(JSON.stringify({
+                    merchant_id: formObj.merchant_id,
+                    client_id: formObj.client_id,
+                    project_id: formObj.escrow_project_id,
+                    amount: parseFloat(formObj.amount)
+                }, null, 2));
+                console.log('');
+                
+                console.log('%c💡 STEP 4: Order-to-Project Mapping', 'color: #06b6d4; font-weight: bold; font-size: 14px;');
+                console.log('  WooCommerce Order #' + formObj.order_id + ' → Escrow Project ID: ' + formObj.escrow_project_id);
+                console.log('  This ensures each order gets a unique escrow transaction!');
+                console.log('');
+                
+                console.log('%c⏳ STEP 5: Submitting to Backend...', 'color: #10b981; font-weight: bold; font-size: 14px;');
+                console.log('Form is being submitted to PHP for processing.');
+                console.log('Check server logs (wp-content/debug.log) for backend processing (STEP 1-8)');
+                console.log('');
+                console.log('%c━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'color: #3b82f6; font-size: 16px;');
+            });
+        });
+        </script>
+                console.log('The backend will now:');
+                console.log('  1️⃣  ✅ Use existing WooCommerce order: #' + (formObj.order_id || '{CREATED}'));
+                console.log('  2️⃣  ✅ Use escrow project ID: ' + (formObj.escrow_project_id || 'order-{order_id}'));
+                console.log('  3️⃣  Call escrow API with order-based project_id for unique tracking');
+                console.log('  4️⃣  Link escrow to the order and update order status');
+                console.log('');
+                
+                console.log('%c🌐 STEP 4: Expected API Call', 'color: #06b6d4; font-weight: bold;');
+            });
+        });
+        </script>
 
-                    <!-- Manually include jQuery, mntEscrow object, and mnt-complete-escrow.js -->
-                    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-                    <script>
-                    var mntEscrow = {
-                        ajaxUrl: '<?php echo admin_url('admin-ajax.php'); ?>',
-                        nonce: '<?php echo wp_create_nonce('mnt_nonce'); ?>'
-                    };
-                    </script>
-                    <script src="<?php echo plugins_url('assets/js/mnt-complete-escrow.js', dirname(__FILE__)); ?>?v=debug"></script>
+        <?php endif; ?>
 
-                <?php elseif ($escrow_error): ?>
-                    <div class="tk-alert tk-alert-error">
-                        <?php echo $escrow_error; ?>
-                        <?php if (isset($escrow_result)): ?>
-                            <details style="margin-top:12px;">
-                                <summary style="cursor:pointer;font-weight:600;"><?php esc_html_e('Show Raw API Response', 'taskbot'); ?></summary>
-                                <pre class="tk-code-block"><?php echo esc_html(print_r($escrow_result, true)); ?></pre>
-                            </details>
-                        <?php endif; ?>
-                    </div>
-                <?php endif; ?>
+        <!-- Error Message Display -->
+        <?php if ($escrow_error): ?>
+            <div class="tk-alert tk-alert-error">
+                <?php echo $escrow_error; ?>
+            </div>
+        <?php endif; ?>
 
-        <div class="row">
-            <div class="col-12">
-                <form method="post" class="tb-themeform" id="mnt-create-task-escrow-form">
-                    <?php wp_nonce_field('create_escrow_task', 'create_escrow_nonce'); ?>
-                    <input type="hidden" name="task_id" value="<?php echo esc_attr($task_id); ?>">
-                    <input type="hidden" name="merchant_id" value="<?php echo esc_attr($merchant_id); ?>">
-                    <input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>">
-                    <?php if (!empty($package_key)): ?>
-                        <input type="hidden" name="package_key" value="<?php echo esc_attr($package_key); ?>">
-                    <?php endif; ?>
-                    <fieldset>
+        <!-- Create Escrow Form -->
+        <form method="POST" id="mnt-create-task-escrow-form" class="tb-themeform">
+            <?php wp_nonce_field('create_escrow_task', 'create_escrow_nonce'); ?>
+            <input type="hidden" name="task_id" value="<?php echo esc_attr($task_id); ?>">
+            <input type="hidden" name="merchant_id" value="<?php echo esc_attr($merchant_id); ?>">
+            <input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>">
+            <input type="hidden" name="package_key" value="<?php echo esc_attr($package_key); ?>"></fieldset>
+            
+            <fieldset>
                         <div class="tb-themeform__wrap">
                             <div class="form-group">
                                 <label class="tb-label"><?php esc_html_e('Escrow Amount (₦)', 'taskbot'); ?></label>
@@ -525,40 +873,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                 </form>
             </div>
         </div>
-
-        <!-- Log create task escrow form data before submission -->
-        <script>
-        jQuery(function($) {
-            $('#mnt-create-task-escrow-form').on('submit', function(e) {
-                var formData = $(this).serializeArray();
-                var formObj = {};
-                $.each(formData, function(i, field) {
-                    formObj[field.name] = field.value;
-                });
-                
-                console.log('=== CREATE TASK ESCROW - Form Submission ===');
-                console.log('Form Data:', formObj);
-                console.log('');
-                console.log('=== Backend Will Process This As ===');
-                console.log('task_id:', formObj.task_id, '(will be mapped to project_id)');
-                console.log('client_id:', formObj.client_id);
-                console.log('merchant_id:', formObj.merchant_id);
-                console.log('amount:', formObj.amount);
-                console.log('package_key:', formObj.package_key || '(none)');
-                console.log('');
-                console.log('=== Expected API Call ===');
-                console.log('Endpoint: POST https://escrow-api-dfl6.onrender.com/api/escrow/create_transaction');
-                console.log('API Payload: {');
-                console.log('  "merchant_id": "' + formObj.merchant_id + '",');
-                console.log('  "client_id": "' + formObj.client_id + '",');
-                console.log('  "project_id": "' + formObj.task_id + '",  // task_id is used as project_id');
-                console.log('  "amount": ' + formObj.amount);
-                console.log('}');
-                console.log('');
-                console.log('Form will now submit to PHP backend for processing...');
-            });
-        });
-        </script>
 
     </div>
 </div>

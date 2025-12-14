@@ -168,6 +168,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                 echo '<script>console.log("Step 4: Regular Project Payment (Non-Milestone)");</script>';
             }
             
+            // Ensure a WooCommerce order exists and is saved BEFORE creating escrow (milestone or regular)
+            if (class_exists('WooCommerce')) {
+                if (empty($wc_order) && empty($wc_order_id)) {
+                    $wc_order = wc_create_order(['customer_id' => $client_id]);
+                    if (!is_wp_error($wc_order)) {
+                        $product = wc_get_product($project_id);
+                        if ($product) {
+                            $wc_order->add_product($product, 1, ['subtotal' => $amount, 'total' => $amount]);
+                        }
+                        $wc_order->set_payment_method('mnt_escrow');
+                        $wc_order->set_payment_method_title('Escrow Payment');
+                        $wc_order->set_total($amount);
+                        $wc_order->set_status('pending');
+                        $wc_order->save();
+                        $wc_order_id = $wc_order->get_id();
+                        if (empty($escrow_project_id)) {
+                            $escrow_project_id = 'order-' . $wc_order_id;
+                            $wc_order->add_meta_data('mnt_escrow_project_id', $escrow_project_id);
+                            $wc_order->save();
+                        }
+                        error_log('MNT: Auto-created tracking order for escrow: #' . $wc_order_id);
+                    } else {
+                        error_log('MNT: Failed to auto-create tracking order: ' . $wc_order->get_error_message());
+                    }
+                }
+            }
+
             // Use appropriate API endpoint
             if ($is_milestone_payment && $milestone_data) {
                 // Prepare milestone array for API
@@ -204,6 +231,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_escrow_nonce']
                 
                 echo '<script>console.log("Step 6: Milestone Escrow API Response", ' . json_encode($escrow_result) . ');</script>';
             } else {
+                // Ensure a WooCommerce order exists and is saved BEFORE creating escrow
+                if (class_exists('WooCommerce')) {
+                    if (empty($wc_order) && empty($wc_order_id)) {
+                        // Create a lightweight tracking order so WP/WC initialize order internals
+                        $wc_order = wc_create_order(['customer_id' => $client_id]);
+                        if (!is_wp_error($wc_order)) {
+                            $product = wc_get_product($project_id);
+                            if ($product) {
+                                $wc_order->add_product($product, 1, ['subtotal' => $amount, 'total' => $amount]);
+                            }
+                            $wc_order->set_payment_method('mnt_escrow');
+                            $wc_order->set_payment_method_title('Escrow Payment');
+                            $wc_order->set_total($amount);
+                            $wc_order->set_status('pending');
+                            $wc_order->save();
+                            $wc_order_id = $wc_order->get_id();
+                            if (empty($escrow_project_id)) {
+                                $escrow_project_id = 'order-' . $wc_order_id;
+                                $wc_order->add_meta_data('mnt_escrow_project_id', $escrow_project_id);
+                                $wc_order->save();
+                            }
+                            error_log('MNT: Auto-created tracking order for escrow: #' . $wc_order_id);
+                        } else {
+                            error_log('MNT: Failed to auto-create tracking order: ' . $wc_order->get_error_message());
+                        }
+                    }
+                }
+
                 // Regular escrow transaction
                 $api_payload = [
                     'merchant_id' => (string)$merchant_id,

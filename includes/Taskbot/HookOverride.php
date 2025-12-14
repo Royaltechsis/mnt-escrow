@@ -135,12 +135,56 @@ class HookOverride {
             return;
         }
         
+        // Ensure a WooCommerce order exists and is saved BEFORE creating escrow
+        $order_id = get_post_meta($task_id, 'mnt_last_order_id', true);
+        $order_obj = null;
+        if (empty($order_id) && class_exists('WooCommerce')) {
+            try {
+                $order_obj = wc_create_order(['customer_id' => $buyer_id]);
+                if (!is_wp_error($order_obj)) {
+                    // add the task as an item so Taskbot/Woo can reference it
+                    $product = wc_get_product($task_id);
+                    if ($product) {
+                        $order_obj->add_product($product, 1, ['subtotal' => $amount, 'total' => $amount]);
+                    } else {
+                        $item = new \WC_Order_Item_Product();
+                        $item->set_name($task->post_title);
+                        $item->set_quantity(1);
+                        $item->set_subtotal($amount);
+                        $item->set_total($amount);
+                        $item->set_product_id($task_id);
+                        $order_obj->add_item($item);
+                    }
+                    $order_obj->set_payment_method('mnt_escrow');
+                    $order_obj->set_payment_method_title('Escrow Payment');
+                    $order_obj->set_total($amount);
+                    $order_obj->set_status('pending');
+                    $order_obj->save();
+                    $order_id = $order_obj->get_id();
+                    update_post_meta($task_id, 'mnt_last_order_id', $order_id);
+                    update_post_meta($task_id, 'mnt_escrow_project_id', 'order-' . $order_id);
+                    update_post_meta($order_id, '_mnt_task_id', $task_id);
+                    error_log('MNT: Created tracking order #' . $order_id . ' for task ' . $task_id . ' before escrow creation');
+                } else {
+                    error_log('MNT: Failed to create order for task ' . $task_id . ' - ' . $order_obj->get_error_message());
+                    $order_obj = null;
+                }
+            } catch (\Exception $e) {
+                error_log('MNT: Exception creating order for task ' . $task_id . ' - ' . $e->getMessage());
+            }
+        } else if (!empty($order_id)) {
+            $order_obj = wc_get_order($order_id);
+        }
+
+        // Use the order-based project id when available to link escrow to order
+        $project_id_for_api = !empty($order_id) ? 'order-' . $order_id : $task_id;
+
         // Create escrow transaction
         // API signature: create(merchant_id, client_id, project_id, amount)
         $result = Escrow::create(
             $seller_id,
             $buyer_id,
-            $task_id,
+            $project_id_for_api,
             $amount
         );
         

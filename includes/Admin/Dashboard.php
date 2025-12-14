@@ -138,6 +138,24 @@ class Dashboard {
                 <button class="button">Dispute Transaction</button>
                 <button class="button">Resolve Dispute</button>
             </div>
+
+            <hr style="margin: 32px 0;">
+            <h2>Backfill Task Orders (Repair Draft Orders)</h2>
+            <p>Use this tool to find orders with <code>payment_type=tasks</code> that are stuck in <code>draft</code> and repair them so they appear in Taskbot dashboards. Start with <em>Dry Run</em> to see what would be changed.</p>
+            <div>
+                <button id="mnt-backfill-dry" class="button">Backfill (Dry Run)</button>
+                <button id="mnt-backfill-run" class="button button-primary">Backfill (Run)</button>
+            </div>
+            <div id="mnt-backfill-results" style="margin-top:16px; white-space:pre-wrap; background:#fff; padding:12px; border:1px solid #eee; display:none;"></div>
+
+            <hr style="margin: 32px 0;">
+            <h2>Repair Single Order</h2>
+            <p>Force an order into <code>processing</code> and refresh caches to test dashboard visibility.</p>
+            <div>
+                <input type="number" id="mnt-repair-order-id" placeholder="Order ID" style="width:120px; margin-right:8px;">
+                <button id="mnt-repair-order" class="button">Repair Order</button>
+            </div>
+            <div id="mnt-repair-results" style="margin-top:12px; white-space:pre-wrap; background:#fff; padding:12px; border:1px solid #eee; display:none;"></div>
         </div>
         <style>
         .mnt-admin-wrap h2 { margin-top: 2em; }
