@@ -9,6 +9,103 @@ jQuery(function($) {
     console.log('#mnt-complete-escrow-modal visible:', $('#mnt-complete-escrow-modal').is(':visible'));
 });
 
+// Client Confirm (Release Funds) from Task 'Complete now' button
+jQuery(document).on('click', '.tb_taskrating_task, .tb_rating_task', function(e) {
+    e.preventDefault();
+    var $ = jQuery;
+    var $btn = $(this);
+    var orderId = $btn.data('order_id') || $btn.data('order-id') || 0;
+    var taskId = $btn.data('task_id') || $btn.data('task-id') || 0;
+
+    console.log('=== MNT: Client Confirm Clicked ===');
+    console.log('  orderId:', orderId);
+    console.log('  taskId:', taskId);
+
+    if (!orderId && !taskId) {
+        console.error('Client Confirm - Missing order_id and task_id on button');
+        alert('Missing order or task ID. Cannot continue.');
+        return;
+    }
+
+    if (!confirm('Are you sure you want to complete this task and release funds to the seller?')) {
+        return;
+    }
+
+    $btn.prop('disabled', true).text('Completing...');
+
+    var ajaxData = {
+        action: 'mnt_client_confirm',
+        order_id: orderId,
+        task_id: taskId,
+        nonce: (typeof mntEscrow !== 'undefined' ? mntEscrow.nonce : '')
+    };
+
+    console.log('AJAX -> mnt_client_confirm', ajaxData);
+
+    $.post(mntEscrow.ajaxUrl, ajaxData)
+        .done(function(response) {
+            console.log('Client Confirm response:', response);
+            if (response && response.success) {
+               // alert(response.data.message || 'Client confirmation succeeded. Funds released.');
+                // Optionally show raw API result in console
+                console.log('API result:', response.data.result);
+                // Reload to reflect new status
+                setTimeout(function() { location.reload(); }, 800);
+            } else {
+                var msg = (response && response.data && response.data.message) ? response.data.message : 'Client confirmation failed.';
+               // alert('Error: ' + msg);
+                console.error('Client Confirm Error detail:', response && response.data ? response.data : response);
+                $btn.prop('disabled', false).text('Complete now');
+            }
+        })
+        .fail(function(xhr, status, err) {
+            console.error('Client Confirm AJAX failed:', status, err, xhr.responseText);
+            alert('AJAX request failed. See console for details.');
+            $btn.prop('disabled', false).text('Complete now');
+        });
+});
+
+// Modal buttons inside Taskbot complete modal - ensure client_confirm is called and payload logged
+jQuery(document).on('click', '.tb_complete_task, .tb_rating_task', function(e) {
+    var $ = jQuery;
+    var $btn = $(this);
+    var orderId = $btn.data('order_id') || $btn.data('order-id') || 0;
+    var taskId = $btn.data('task_id') || $btn.data('task-id') || 0;
+    // If modal is for proposals the inputs use proposalId -> try to find order id from hidden fields
+    if (!orderId) {
+        // Try to guess from inputs in modal (Taskbot uses id patterns)
+        var proposalId = $btn.data('proposal_id') || $btn.closest('[data-proposal-id]').data('proposal-id') || null;
+        if (proposalId) {
+            // try to find order id field matching proposalId
+            var orderField = jQuery('#tb_rating_title-' + proposalId).closest('form').find("[data-order_id]");
+            if (orderField.length) orderId = orderField.data('order_id');
+        }
+    }
+
+    var payload = {
+        project_id: orderId ? ('order-' + orderId) : null,
+        order_id: orderId,
+        task_id: taskId,
+        buyer_id: (typeof mntEscrow !== 'undefined' ? mntEscrow.currentUserId || '' : ''),
+    };
+
+    console.log('%cMNT Client Confirm Payload (modal button clicked):', 'color:#2563eb;font-weight:bold;', payload);
+
+    // Fire the client_confirm AJAX call but don't block default behaviors (submit/close)
+    jQuery.post(mntEscrow.ajaxUrl, {
+        action: 'mnt_client_confirm',
+        order_id: orderId,
+        task_id: taskId,
+        nonce: (typeof mntEscrow !== 'undefined' ? mntEscrow.nonce : '')
+    }).done(function(resp) {
+        console.log('MNT client_confirm response (modal):', resp);
+    }).fail(function(xhr, status, err) {
+        console.error('MNT client_confirm AJAX failed (modal):', status, err, xhr && xhr.responseText);
+    });
+
+    // Let the modal continue to handle feedback submission or completion as normal
+});
+
 // Escrow Complete Funds Handler - Use jQuery instead of $
 jQuery(document).on('click', '#mnt-complete-escrow-btn', function(e) {
     console.log('=== MNT: Release Funds Button Clicked ===');

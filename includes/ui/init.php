@@ -51,6 +51,9 @@ class Init {
         add_action('wp_ajax_mnt_backfill_task_orders', [__CLASS__, 'handle_mnt_backfill_task_orders_ajax']);
         // Admin repair single order endpoint
         add_action('wp_ajax_mnt_admin_repair_order', [__CLASS__, 'handle_mnt_admin_repair_order_ajax']);
+        // Client confirm (release funds) endpoint
+        add_action('wp_ajax_mnt_client_confirm', [__CLASS__, 'handle_client_confirm_ajax']);
+        add_action('wp_ajax_nopriv_mnt_client_confirm', [__CLASS__, 'handle_client_confirm_ajax']);
 
     }
 
@@ -191,12 +194,14 @@ class Init {
         // Localize script with AJAX URL and nonce
         wp_localize_script('mnt-complete-escrow-js', 'mntEscrow', [
             'ajaxUrl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('mnt_nonce')
+            'nonce' => wp_create_nonce('mnt_nonce'),
+            'currentUserId' => get_current_user_id(),
         ]);
         
         wp_localize_script('mnt-escrow-js', 'mntEscrow', [
             'ajaxUrl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('mnt_nonce')
+            'nonce' => wp_create_nonce('mnt_nonce'),
+            'currentUserId' => get_current_user_id(),
         ]);
     }
 
@@ -1162,6 +1167,140 @@ class Init {
                 'result' => $result
             ]);
         }
+    }
+
+    /**
+     * AJAX Handler: Client Confirm - Release funds from escrow to seller wallet
+     * Endpoint: calls Escrow::client_confirm(project_id, buyer_id, seller_id)
+     */
+    public static function handle_client_confirm_ajax() {
+        check_ajax_referer('mnt_nonce', 'nonce');
+
+        $order_id = isset($_POST['order_id']) ? intval($_POST['order_id']) : 0;
+        $task_id = isset($_POST['task_id']) ? intval($_POST['task_id']) : 0;
+
+        error_log('');
+        error_log('╔════════════════════════════════════════════════════════════════╗');
+        error_log('║  MNT CLIENT CONFIRM AJAX HANDLER CALLED                         ║');
+        error_log('╚════════════════════════════════════════════════════════════════╝');
+        error_log('');
+        error_log('📥 RECEIVED DATA:');
+        error_log('  order_id: ' . $order_id);
+        error_log('  task_id: ' . $task_id);
+        error_log('  current_user: ' . get_current_user_id());
+        error_log('');
+
+        if (empty($order_id) && empty($task_id)) {
+            error_log('MNT Client Confirm - ERROR: Missing order_id and task_id');
+            wp_send_json_error(['message' => 'Missing order or task identifier.']);
+            return;
+        }
+
+        // Build project_id in task context: use order-<id>
+        $project_id = 'order-' . $order_id;
+        if (empty($order_id) && $task_id) {
+            // If only task_id provided, attempt to map to order via meta
+            $order_meta_candidates = get_posts([
+                'post_type'  => 'shop_order',
+                'post_status'=> 'any',
+                'meta_query' => [
+                    ['key' => 'task_product_id', 'value' => $task_id],
+                ],
+                'fields' => 'ids',
+                'posts_per_page' => 1,
+            ]);
+            if (!empty($order_meta_candidates)) {
+                $order_id = intval($order_meta_candidates[0]);
+                $project_id = 'order-' . $order_id;
+                error_log('MNT Client Confirm - Found order_id via task_id: ' . $order_id);
+            }
+        }
+
+        $buyer_id = get_current_user_id();
+
+        // Verify buyer matches order buyer meta when order_id is provided
+        if ($order_id) {
+            $order_buyer_meta = get_post_meta($order_id, 'buyer_id', true) ?: get_post_meta($order_id, '_buyer_id', true);
+            error_log('MNT Client Confirm - Order buyer meta: ' . ($order_buyer_meta ?: 'EMPTY'));
+            if (!empty($order_buyer_meta) && intval($order_buyer_meta) !== intval($buyer_id)) {
+                error_log('MNT Client Confirm - ERROR: Current user does not match order buyer.');
+                wp_send_json_error(['message' => 'You are not authorized to confirm this order.']);
+                return;
+            }
+        }
+
+        // Find seller id from order meta (common keys)
+        $seller_id = get_post_meta($order_id, 'seller_id', true) ?: get_post_meta($order_id, '_seller_id', true);
+        if (empty($seller_id) && $task_id) {
+            $seller_id = get_post_meta($task_id, 'mnt_escrow_seller', true) ?: get_post_meta($task_id, '_seller_id', true);
+        }
+
+        error_log('MNT Client Confirm - Resolved IDs:');
+        error_log('  project_id: ' . $project_id);
+        error_log('  order_id: ' . $order_id);
+        error_log('  task_id: ' . $task_id);
+        error_log('  buyer_id: ' . $buyer_id);
+        error_log('  seller_id: ' . ($seller_id ?: 'EMPTY'));
+
+        if (empty($seller_id)) {
+            error_log('MNT Client Confirm - ERROR: seller_id not found');
+            wp_send_json_error(['message' => 'Seller ID could not be determined for this order.']);
+            return;
+        }
+
+        // Call Escrow API client_confirm
+        error_log('Endpoint: POST https://escrow-api-dfl6.onrender.com/api/escrow/client_confirm');
+        error_log('Method: client_confirm()');
+
+        // Log payload that will be sent to external API
+        $payload = [
+            'project_id' => $project_id,
+            'client_id' => $buyer_id,
+            'merchant_id' => $seller_id,
+            'confirm_status' => true,
+            'task_id' => $task_id,
+            'order_id' => $order_id
+        ];
+        error_log('MNT Client Confirm - Payload to be sent: ' . json_encode($payload));
+
+        $result = \MNT\Api\Escrow::client_confirm($project_id, $buyer_id, $seller_id, true);
+        error_log('MNT Escrow: client_confirm API response: ' . json_encode($result));
+
+        $is_success = false;
+        if (is_array($result) && (isset($result['success']) && $result['success'] === true)) {
+            $is_success = true;
+        } elseif (is_array($result) && isset($result['status']) && $result['status'] === 'success') {
+            $is_success = true;
+        }
+
+        if ($is_success) {
+            // Mark order as client confirmed
+            update_post_meta($order_id, 'mnt_client_confirmed', true);
+            update_post_meta($order_id, 'mnt_client_confirmed_at', current_time('mysql'));
+
+            error_log('MNT Escrow: client_confirm succeeded - funds released to seller');
+
+            wp_send_json_success([
+                'message' => 'Client confirmation succeeded. Funds released to seller.',
+                'result'  => $result,
+                'project_id' => $project_id,
+                'order_id' => $order_id,
+                'seller_id' => $seller_id,
+                'buyer_id' => $buyer_id,
+            ]);
+            return;
+        }
+
+        $error_msg = $result['message'] ?? ($result['error'] ?? 'Client confirm failed.');
+        error_log('MNT Escrow: client_confirm FAILED - ' . $error_msg);
+        wp_send_json_error([
+            'message' => $error_msg,
+            'result'  => $result,
+            'project_id' => $project_id,
+            'order_id' => $order_id,
+            'seller_id' => $seller_id,
+            'buyer_id' => $buyer_id,
+        ]);
     }
 
     /**
