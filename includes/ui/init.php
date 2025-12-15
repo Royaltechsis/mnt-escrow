@@ -63,6 +63,8 @@ class Init {
      * @param int $seller_id
      * @param string $order_type Optional: _task_status filter (e.g., 'hired')
      * @return array Array of order IDs
+        *
+        * Note: returns unique IDs only; uses DISTINCT and normalization to avoid duplicate IDs
      */
     public static function mnt_get_seller_task_orders($seller_id = 0, $order_type = 'any') {
         $seller_id = intval($seller_id);
@@ -76,7 +78,12 @@ class Init {
         $meta_query = [
             'relation' => 'AND',
             [ 'key' => 'payment_type', 'value' => 'tasks', 'compare' => '=' ],
-            [ 'key' => 'seller_id', 'value' => $seller_id, 'compare' => '=' ],
+            // Accept either 'seller_id' or '_seller_id' meta key
+            [
+                'relation' => 'OR',
+                [ 'key' => 'seller_id', 'value' => $seller_id, 'compare' => '=' ],
+                [ 'key' => '_seller_id', 'value' => $seller_id, 'compare' => '=' ],
+            ],
         ];
 
         if (!empty($order_type) && $order_type !== 'any') {
@@ -95,18 +102,44 @@ class Init {
 
         $q = new \WP_Query($args);
         if (!empty($q->posts)) {
-            return $q->posts;
+            // Normalize to unique integer IDs to be defensive against duplicates
+            return array_values(array_unique(array_map('intval', $q->posts)));
         }
 
         // Fallback: WP_Query returned nothing but meta rows exist (edge-case with INNER JOIN)
         global $wpdb;
+            // Use DISTINCT to avoid duplicate post IDs when multiple meta rows exist
             $found = $wpdb->get_col( $wpdb->prepare(
-                "SELECT pm1.post_id FROM {$wpdb->postmeta} pm1 JOIN {$wpdb->postmeta} pm2 ON pm1.post_id = pm2.post_id JOIN {$wpdb->posts} p ON p.ID = pm1.post_id WHERE pm1.meta_key = %s AND pm1.meta_value = %s AND pm2.meta_key = %s AND pm2.meta_value = %s ORDER BY p.post_date DESC",
-                'payment_type', 'tasks', 'seller_id', $seller_id
+                "SELECT DISTINCT pm1.post_id FROM {$wpdb->postmeta} pm1 JOIN {$wpdb->postmeta} pm2 ON pm1.post_id = pm2.post_id JOIN {$wpdb->posts} p ON p.ID = pm1.post_id WHERE pm1.meta_key = %s AND pm1.meta_value = %s AND pm2.meta_key IN (%s,%s) AND pm2.meta_value = %s ORDER BY p.post_date DESC",
+                'payment_type', 'tasks', 'seller_id', '_seller_id', $seller_id
             ) );
 
-        // Return found IDs (no post_status filtering) so UI can show orders regardless of lifecycle state.
-        return is_array($found) ? $found : [];
+        // Ensure every order has a task status; if missing, default to 'inqueue'
+        $result = [];
+        if (is_array($found)) {
+            // Ensure unique, integer IDs in case of unexpected duplicates
+            $found = array_values(array_unique(array_map('intval', $found)));
+            foreach ($found as $pid) {
+                $pid = intval($pid);
+                $ts = get_post_meta($pid, '_task_status', true);
+                if (empty($ts)) {
+                    // default missing _task_status to 'inqueue' for dashboard visibility
+                    error_log('MNT: Setting default _task_status=inqueue for order ' . $pid);
+                    self::mnt_update_task_status($pid, 'inqueue', false);
+                    $ts = 'inqueue';
+                }
+                // If a specific order_type was requested, filter by it
+                if (!empty($order_type) && $order_type !== 'any') {
+                    if ($ts === $order_type) {
+                        $result[] = $pid;
+                    }
+                } else {
+                    $result[] = $pid;
+                }
+            }
+        }
+
+        return $result;
     }
 
     /**
@@ -115,6 +148,8 @@ class Init {
      * @param int $buyer_id
      * @param string $order_type Optional: _task_status filter (e.g., 'hired')
      * @return array Array of order IDs
+        *
+        * Note: returns unique IDs only; uses DISTINCT and normalization to avoid duplicate IDs
      */
     public static function mnt_get_buyer_task_orders($buyer_id = 0, $order_type = 'any') {
         $buyer_id = intval($buyer_id);
@@ -128,7 +163,12 @@ class Init {
         $meta_query = [
             'relation' => 'AND',
             [ 'key' => 'payment_type', 'value' => 'tasks', 'compare' => '=' ],
-            [ 'key' => 'buyer_id', 'value' => $buyer_id, 'compare' => '=' ],
+            // Accept either 'buyer_id' or '_buyer_id' meta key
+            [
+                'relation' => 'OR',
+                [ 'key' => 'buyer_id', 'value' => $buyer_id, 'compare' => '=' ],
+                [ 'key' => '_buyer_id', 'value' => $buyer_id, 'compare' => '=' ],
+            ],
         ];
 
         if (!empty($order_type) && $order_type !== 'any') {
@@ -147,18 +187,42 @@ class Init {
 
         $q = new \WP_Query($args);
         if (!empty($q->posts)) {
-            return $q->posts;
+            // Normalize to unique integer IDs to be defensive against duplicates
+            return array_values(array_unique(array_map('intval', $q->posts)));
         }
 
         // Fallback: WP_Query returned nothing but meta rows exist (edge-case with INNER JOIN)
         global $wpdb;
+            // Use DISTINCT to avoid duplicate post IDs when multiple meta rows exist
             $found = $wpdb->get_col( $wpdb->prepare(
-                "SELECT pm1.post_id FROM {$wpdb->postmeta} pm1 JOIN {$wpdb->postmeta} pm2 ON pm1.post_id = pm2.post_id JOIN {$wpdb->posts} p ON p.ID = pm1.post_id WHERE pm1.meta_key = %s AND pm1.meta_value = %s AND pm2.meta_key = %s AND pm2.meta_value = %s ORDER BY p.post_date DESC",
-                'payment_type', 'tasks', 'buyer_id', $buyer_id
+                "SELECT DISTINCT pm1.post_id FROM {$wpdb->postmeta} pm1 JOIN {$wpdb->postmeta} pm2 ON pm1.post_id = pm2.post_id JOIN {$wpdb->posts} p ON p.ID = pm1.post_id WHERE pm1.meta_key = %s AND pm1.meta_value = %s AND pm2.meta_key IN (%s,%s) AND pm2.meta_value = %s ORDER BY p.post_date DESC",
+                'payment_type', 'tasks', 'buyer_id', '_buyer_id', $buyer_id
             ) );
 
-        // Return found IDs (no post_status filtering) so UI can show orders regardless of lifecycle state.
-        return is_array($found) ? $found : [];
+        // Ensure every order has a task status; if missing, default to 'inqueue'
+        $result = [];
+        if (is_array($found)) {
+            // Ensure unique, integer IDs in case of unexpected duplicates
+            $found = array_values(array_unique(array_map('intval', $found)));
+            foreach ($found as $pid) {
+                $pid = intval($pid);
+                $ts = get_post_meta($pid, '_task_status', true);
+                if (empty($ts)) {
+                    error_log('MNT: Setting default _task_status=inqueue for order ' . $pid);
+                    self::mnt_update_task_status($pid, 'inqueue', false);
+                    $ts = 'inqueue';
+                }
+                if (!empty($order_type) && $order_type !== 'any') {
+                    if ($ts === $order_type) {
+                        $result[] = $pid;
+                    }
+                } else {
+                    $result[] = $pid;
+                }
+            }
+        }
+
+        return $result;
     }
     
     /**
@@ -203,6 +267,55 @@ class Init {
             'nonce' => wp_create_nonce('mnt_nonce'),
             'currentUserId' => get_current_user_id(),
         ]);
+    }
+
+    /**
+     * Ensure a post/order has a task status and update it centrally.
+     *
+     * @param int $post_id
+     * @param string $status
+     * @param bool $set_wc_status If true, also attempt to update the WooCommerce order status mapping
+     * @return bool
+     */
+    public static function mnt_update_task_status( $post_id, $status = 'inqueue', $set_wc_status = false ) {
+        $post_id = intval($post_id);
+        if ( ! $post_id ) {
+            return false;
+        }
+
+        $status = sanitize_text_field( $status );
+
+        // Update canonical meta keys used by the dashboard
+        update_post_meta( $post_id, '_task_status', $status );
+        update_post_meta( $post_id, '_taskbot_order_status', $status );
+
+        // Optionally map task status to a WC order status when this is an order
+        if ( $set_wc_status && function_exists('wc_get_order') ) {
+            $order = wc_get_order( $post_id );
+            if ( $order ) {
+                $map = [
+                    'hired'     => 'processing',
+                    'inqueue'   => 'pending',
+                    'pending'   => 'pending',
+                    'completed' => 'completed',
+                    'cancelled' => 'cancelled',
+                    'refunded'  => 'refunded',
+                ];
+                $wc_status = isset($map[$status]) ? $map[$status] : null;
+                if ( $wc_status ) {
+                    try {
+                        $order->set_status( $wc_status );
+                        $order->save();
+                        clean_post_cache( $post_id );
+                        wp_cache_delete( $post_id, 'post_meta' );
+                    } catch (\Exception $e) {
+                        error_log('MNT: Error setting WC order status for order ' . $post_id . ': ' . $e->getMessage());
+                    }
+                }
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -700,6 +813,7 @@ class Init {
                 'message' => $msg,
                 'already_funded' => true,
                 'escrow_data' => $escrow_data
+                ,'redirect_url' => (function_exists('wc_get_page_permalink') ? wc_get_page_permalink('dashboard') : home_url('/'))
             ]);
             return;
         } elseif ($escrow_status === 'FINALIZED') {
@@ -905,7 +1019,8 @@ class Init {
             update_post_meta($complete_order_id, 'seller_id', $seller_id);
             update_post_meta($complete_order_id, '_buyer_id', $user_id);
             update_post_meta($complete_order_id, '_seller_id', $seller_id);
-            update_post_meta($complete_order_id, '_task_status', 'hired');
+            // Use centralized status updater to keep meta + optional WC mapping consistent
+            self::mnt_update_task_status($complete_order_id, 'hired', true);
             update_post_meta($complete_order_id, '_taskbot_order_status', 'hired');
 
             // Log order meta snapshot for visibility
@@ -951,7 +1066,7 @@ class Init {
 
             // Direct DB check (bypass WP filters) to ensure meta exists on orders
             $found_via_db = $wpdb->get_col( $wpdb->prepare(
-                "SELECT pm1.post_id FROM {$wpdb->postmeta} pm1 JOIN {$wpdb->postmeta} pm2 ON pm1.post_id = pm2.post_id WHERE pm1.meta_key = %s AND pm1.meta_value = %s AND pm2.meta_key = %s AND pm2.meta_value = %s",
+                "SELECT DISTINCT pm1.post_id FROM {$wpdb->postmeta} pm1 JOIN {$wpdb->postmeta} pm2 ON pm1.post_id = pm2.post_id WHERE pm1.meta_key = %s AND pm1.meta_value = %s AND pm2.meta_key = %s AND pm2.meta_value = %s",
                 'payment_type', 'tasks', 'seller_id', $seller_id
             ) );
             error_log('MNT Diagnostic DB check (payment_type=tasks & seller_id=' . $seller_id . '): ' . json_encode($found_via_db));
@@ -1010,12 +1125,17 @@ class Init {
         ];
     }
 
-    wp_send_json_success([
-        'message'    => '<strong>✅ Escrow Funded & Task Purchased!</strong>',
-        'order_id'   => $wc_order_id,
-        'task_hired' => true,
-        'hook_result'=> $hook_result
-    ]);
+    // Provide a redirect URL back to the buyer dashboard to avoid reload-triggered duplicates
+            $redirect_url = function_exists('wc_get_page_permalink') ? wc_get_page_permalink('dashboard') : home_url('/');
+            error_log('MNT Fund Escrow - redirect_url: ' . $redirect_url);
+
+            wp_send_json_success([
+                'message'    => '<strong>✅ Escrow Funded & Task Purchased!</strong>',
+                'order_id'   => $wc_order_id,
+                'task_hired' => true,
+                'hook_result'=> $hook_result,
+                'redirect_url' => $redirect_url,
+            ]);
 }
 
 }
@@ -1140,9 +1260,12 @@ class Init {
                 wp_update_post(['ID' => $proposal_id, 'post_status' => 'completed']);
             }
             
+            $redirect_url = function_exists('wc_get_page_permalink') ? wc_get_page_permalink('dashboard') : home_url('/');
+            error_log('MNT Complete Escrow - redirect_url: ' . $redirect_url);
             wp_send_json_success([
                 'message' => $result['message'] ?? 'Contract completed! Funds released to seller wallet.',
-                'result' => $result
+                'result' => $result,
+                'redirect_url' => $redirect_url,
             ]);
         } else {
             $error_msg = isset($result['detail']) ? $result['detail'] : (isset($result['error']) ? $result['error'] : (isset($result['message']) ? $result['message'] : 'Failed to complete contract.'));
@@ -1280,6 +1403,7 @@ class Init {
 
             error_log('MNT Escrow: client_confirm succeeded - funds released to seller');
 
+            $redirect_url = function_exists('wc_get_page_permalink') ? wc_get_page_permalink('dashboard') : home_url('/');
             wp_send_json_success([
                 'message' => 'Client confirmation succeeded. Funds released to seller.',
                 'result'  => $result,
@@ -1287,6 +1411,7 @@ class Init {
                 'order_id' => $order_id,
                 'seller_id' => $seller_id,
                 'buyer_id' => $buyer_id,
+                'redirect_url' => $redirect_url,
             ]);
             return;
         }
@@ -1802,7 +1927,7 @@ class Init {
                 $order->add_meta_data('task_product_id', $project_id);
                 $order->add_meta_data('seller_id', $seller_id);
                 $order->add_meta_data('buyer_id', $buyer_id);
-                $order->add_meta_data('_task_status', 'hired');
+                // Defer to centralized status updater after order is saved and escrow created
                 $order->add_meta_data('payment_type', 'escrow');
                 
                 if ($proposal_id) {
@@ -1878,6 +2003,9 @@ class Init {
                 $order->add_meta_data('mnt_escrow_project_id', 'order-' . $order->get_id());
                 $order->add_meta_data('payment_type', 'escrow');
                 $order->save();
+
+                // Centralized task status update for the created order
+                self::mnt_update_task_status($order->get_id(), 'hired', true);
 
                 // Build activity URL
                 $order_url = Taskbot_Profile_Menu::taskbot_profile_menu_link('projects', $buyer_id, true, 'activity', $proposal_id ? $proposal_id : $order->get_id());
@@ -1990,7 +2118,7 @@ class Init {
             // Set to 'pending' now. Payment success webhook will update this to 'hired'.
             $wc_order->add_meta_data('_taskbot_order_status', 'pending');
             $wc_order->add_meta_data('_taskbot_order_type', 'task');
-            $wc_order->add_meta_data('_task_status', 'pending'); // Alternative field, updated to 'hired' when funds released
+            // _task_status will be set via centralized helper after save to ensure consistent mappings
             
             // Set order total and status
             $wc_order->set_total($amount);
@@ -2000,6 +2128,8 @@ class Init {
             wp_update_post(['ID' => $wc_order->get_id(), 'post_status' => 'wc-pending']);
             
             $wc_order_id = $wc_order->get_id();
+            // Centralized task status updater (sets _task_status and _taskbot_order_status, and optionally WC status)
+            self::mnt_update_task_status($wc_order_id, 'pending', true);
             $escrow_project_id = "order-{$wc_order_id}";
             
             // Add escrow project ID to order
@@ -2049,7 +2179,8 @@ class Init {
             error_log("MNT: No Task ID provided to mnt_update_task_status_on_escrow_funded");
             return;
         }
-        update_post_meta( $task_id, '_task_status', 'hired' );
+        // Centralized status update for task post
+        self::mnt_update_task_status( $task_id, 'hired', false );
         error_log("MNT: Task ID $task_id status updated to 'hired'");
     }
 
@@ -2088,6 +2219,13 @@ class Init {
 
                 if ($order) {
                     try {
+                        // Ensure task status meta is present and consistent
+                        $existing_ts = get_post_meta($id, '_task_status', true);
+                        if (empty($existing_ts)) {
+                            error_log('MNT Backfill: setting default _task_status=inqueue for order ' . $id);
+                            self::mnt_update_task_status($id, 'inqueue', false);
+                        }
+
                         $order->update_status($target, 'Backfill by MNT: fixing draft -> wc-' . $target, true);
                         // Re-ensure Taskbot meta exists
                         update_post_meta($id, 'payment_type', 'tasks');
@@ -2102,6 +2240,12 @@ class Init {
                     // Fallback direct post_status update
                     try {
                         wp_update_post(['ID' => $id, 'post_status' => 'wc-' . $target]);
+                        // Ensure a default _task_status exists when repairing
+                        $existing_ts = get_post_meta($id, '_task_status', true);
+                        if (empty($existing_ts)) {
+                            error_log('MNT Backfill: setting default _task_status=inqueue for order ' . $id);
+                            self::mnt_update_task_status($id, 'inqueue', false);
+                        }
                         update_post_meta($id, 'payment_type', 'tasks');
                         clean_post_cache($id);
                         wp_cache_delete($id, 'post_meta');
@@ -2149,6 +2293,12 @@ class Init {
             update_post_meta($order_id, 'payment_type', get_post_meta($order_id, 'payment_type', true) ?: 'tasks');
             $seller = get_post_meta($order_id, 'seller_id', true) ?: get_post_meta($order_id, '_seller_id', true);
             if ($seller) update_post_meta($order_id, 'seller_id', $seller);
+            // Ensure task status exists
+            $existing_ts = get_post_meta($order_id, '_task_status', true);
+            if (empty($existing_ts)) {
+                error_log('MNT Admin Repair: setting default _task_status=inqueue for order ' . $order_id);
+                self::mnt_update_task_status($order_id, 'inqueue', false);
+            }
             wp_send_json_success(['order_id' => $order_id, 'previous_status' => $previous, 'new_status' => get_post_status($order_id)]);
         } catch (\Exception $e) {
             wp_send_json_error(['message' => $e->getMessage()]);

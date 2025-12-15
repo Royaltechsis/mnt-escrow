@@ -902,8 +902,14 @@
                         
                         if (rating && details) {
                             alert(response.data.message || 'Contract completed! Funds released to seller wallet.');
-                            // Continue with taskbot's review submission
-                            location.reload();
+                            // Redirect to dashboard if provided to avoid duplicate actions on reload
+                            console.log('Complete contract - redirect_url:', response.data && response.data.redirect_url);
+                            if (response.data && response.data.redirect_url) {
+                                console.log('Redirecting to:', response.data.redirect_url);
+                                window.location.href = response.data.redirect_url;
+                            } else {
+                                location.reload();
+                            }
                         } else {
                             alert('Please provide a rating and feedback before completing the contract.');
                             $btn.prop('disabled', false).text(originalText);
@@ -918,10 +924,16 @@
                         
                         // Remove our event handler temporarily to let taskbot handle it
                         $btn.off('click.mnt');
-                        
-                        // Trigger the taskbot complete workflow
-                        // This will show the taskbot confirm complete modal
-                        $btn.trigger('click');
+
+                        // Redirect to dashboard to avoid duplicate completions or confusing modal states
+                        console.log('Complete without review - redirect_url:', response.data && response.data.redirect_url);
+                        if (response.data && response.data.redirect_url) {
+                            console.log('Redirecting to:', response.data.redirect_url);
+                            window.location.href = response.data.redirect_url;
+                        } else {
+                            // Fallback: reload page
+                            location.reload();
+                        }
                     }
                 } else {
                     // Enhanced error handling

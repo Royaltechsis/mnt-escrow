@@ -27,9 +27,9 @@ jQuery(document).on('click', '.tb_taskrating_task, .tb_rating_task', function(e)
         return;
     }
 
-    if (!confirm('Are you sure you want to complete this task and release funds to the seller?')) {
+    /* if (!confirm('Are you sure you want to complete this task and release funds to the seller?')) {
         return;
-    }
+    } */
 
     $btn.prop('disabled', true).text('Completing...');
 
@@ -49,8 +49,15 @@ jQuery(document).on('click', '.tb_taskrating_task, .tb_rating_task', function(e)
                // alert(response.data.message || 'Client confirmation succeeded. Funds released.');
                 // Optionally show raw API result in console
                 console.log('API result:', response.data.result);
-                // Reload to reflect new status
-                setTimeout(function() { location.reload(); }, 800);
+                // Redirect to dashboard if provided to avoid duplicate actions on reload
+                var redirectUrl = response.data && response.data.redirect_url ? response.data.redirect_url : null;
+                if (redirectUrl) {
+                    console.log('Redirecting to:', redirectUrl);
+                    window.location.href = redirectUrl;
+                } else {
+                    // Fallback: reload to reflect new status
+                    setTimeout(function() { location.reload(); }, 800);
+                }
             } else {
                 var msg = (response && response.data && response.data.message) ? response.data.message : 'Client confirmation failed.';
                // alert('Error: ' + msg);
@@ -99,6 +106,11 @@ jQuery(document).on('click', '.tb_complete_task, .tb_rating_task', function(e) {
         nonce: (typeof mntEscrow !== 'undefined' ? mntEscrow.nonce : '')
     }).done(function(resp) {
         console.log('MNT client_confirm response (modal):', resp);
+        // If server includes a redirect URL, follow it to avoid duplicate actions
+        if (resp && resp.success && resp.data && resp.data.redirect_url) {
+            console.log('Modal redirect to:', resp.data.redirect_url);
+            window.location.href = resp.data.redirect_url;
+        }
     }).fail(function(xhr, status, err) {
         console.error('MNT client_confirm AJAX failed (modal):', status, err, xhr && xhr.responseText);
     });
@@ -217,15 +229,18 @@ jQuery(document).on('click', '#mnt-complete-escrow-btn', function(e) {
                     $btn.text('Funded Successfully').prop('disabled', true);
                 }
                 
-                // Close modal and redirect
+                // Close modal and redirect (follow server-provided URL when available)
                 setTimeout(function() {
                     $('#mnt-complete-escrow-modal').fadeOut();
                     $('.modal-backdrop').fadeOut(function() {
                         $(this).remove();
                     });
-                    
-                    // Redirect to buyer insights/ongoing tasks page if available
-                    if (response.data.redirect_url && response.data.task_hired) {
+
+                    // Log redirect info for debugging
+                    console.log('Complete Escrow - redirect_url:', response.data && response.data.redirect_url, 'task_hired:', response.data && response.data.task_hired);
+
+                    // If server provided a redirect URL, follow it. Otherwise reload.
+                    if (response.data && response.data.redirect_url) {
                         console.log('Redirecting to:', response.data.redirect_url);
                         window.location.href = response.data.redirect_url;
                     } else {
